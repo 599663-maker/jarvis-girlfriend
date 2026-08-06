@@ -5,170 +5,132 @@
 <h1 align="center">Jarvis × Codex</h1>
 
 <p align="center">
-  一声“嗨 Jarvis”，让 Codex 从桌面醒来。
+  Wake Codex from your desktop with “Hey Jarvis.”
 </p>
 
 <p align="center">
-  <a href="https://github.com/Big-Guan/jarvis-codex/releases/latest">下载最新版 DMG</a>
+  English · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Big-Guan/jarvis-codex/releases/latest">Download the latest DMG</a>
+  ·
+  <a href="CONTRIBUTING.md">Contribute</a>
 </p>
 
 <p align="center">
   <img src="public/assets/jarvis-character-v2.png" width="520" alt="Jarvis Codex transparent avatar">
 </p>
 
-Jarvis × Codex 是一个 macOS 本地语音工作入口。说出唤醒词后，透明窗口从桌面升起，
-粒子与装甲碎片聚合成 Jarvis；随后通过 Codex app-server WebRTC 进入同一个
-Codex Voice 线程。你可以自然对话、打断回复、继续追问，也可以让 Codex 在当前
-项目中真正执行任务。
+Jarvis × Codex is a local voice workspace for macOS. Say the wake phrase and a
+transparent Jarvis window rises from the desktop, then connects to the same
+Codex thread through the Codex app-server WebRTC interface. You can speak
+naturally, interrupt a response, continue the conversation, and ask Codex to
+perform real work in the selected project.
 
-## v0.2.0：透明粒子视觉版
+> Current status: wake, live transcription, voice responses, and Codex task
+> execution have been verified on Apple Silicon running macOS 26. Realtime
+> conversation is still an experimental Codex app-server capability, so
+> upstream protocol changes may require compatibility updates.
 
-第二版让 Jarvis 成为整个页面的主体，同时保留原有 Voice、线程、权限与 STOP
-主链路：
+## What it does
 
-- 窗口背景完全透明，桌面上只保留 Jarvis 头像与必要状态光效
-- 每次唤醒时，粒子从窗口四周汇聚，并与装甲碎片、能量环共同组成头像
-- 麦克风、文字输入、STOP 和设置按钮默认隐藏，鼠标移入头像区域后才显示
-- 麦克风与 STOP 图标重新校正为几何居中
-- 根据确认、等待授权、任务完成和异常状态触发不同的角色动作与光效
-- Voice 音频电平继续驱动头像呼吸、扫描光和能量强度
+- Recognizes “Hi/Hey Jarvis” and Chinese Jarvis wake phrases on-device
+- Opens a transparent, borderless Tauri 2 desktop interface
+- Connects directly to Codex Voice through app-server V3 WebRTC
+- Keeps voice, text, tool activity, and task execution in the same Codex thread
+- Stores one persistent thread per canonical workspace path
+- Supports natural turn-taking, interruption, follow-up questions, and STOP
+- Offers safe, automatic workspace, and full-access permission profiles
+- Runs in the background at login and raises the window on warm or cold wake
+- Falls back to text input when Voice is temporarily unavailable
 
-视觉层只消费现有音频电平、转写和任务状态事件，不替换唤醒监听、Codex
-app-server WebRTC、工作目录线程续接、权限模式或任务中断逻辑。
+Jarvis does not simulate clicks in the Codex or ChatGPT applications, register
+a global hotkey, or create a separate GPT-Live session. It reuses the local
+Codex authentication and app-server runtime.
 
-## 视觉演进
+## Visual evolution
 
-### 第一版（v0.1.x）：全息工作台
+### v0.1.x — holographic workstation
 
-![Jarvis Codex v0.1.x 全息工作台](docs/images/jarvis-main-ui.png)
+![Jarvis Codex v0.1.x holographic workstation](docs/images/jarvis-main-ui.png)
 
-第一版采用完整 HUD 工作台：任务角色、对话记录、文字输入和 STOP 控制都常驻在
-页面中，重点是让用户看清 Codex 正在做什么，适合观察任务执行过程与系统状态。
+The first version used a persistent HUD with task roles, transcripts, text
+input, and STOP controls. It emphasized visibility into what Codex was doing.
 
-### 第二版（v0.2.0）：透明角色界面
+### v0.2.0 — transparent character interface
 
-第二版移除常驻面板，只留下透明桌面上的 Jarvis 主体。唤醒时，粒子和装甲碎片
-从四周汇聚成完整头像；控制按钮在鼠标移入后出现，界面从“查看一个工作台”转向
-“召唤一个真正出现在桌面上的 Jarvis”。
+The second version makes Jarvis the interface itself. Particles, armor shards,
+and energy rings assemble the character when it wakes. Controls remain hidden
+until the pointer enters the character area, while audio levels and task states
+drive breathing, scanning, acknowledgement, approval, completion, and error
+effects.
 
-> v0.1 是一套 Jarvis 工作台，v0.2 是一个真正出现在桌面上的 Jarvis。
+The visual layer consumes the existing audio, transcript, and task events. It
+does not replace the wake listener, WebRTC connection, workspace thread
+resumption, permission profiles, or interruption logic.
 
-Codex Voice 已经不只是把语音转成一条文字提示：它支持自然轮流说话、回复中
-打断、连续追问，以及在任务执行期间继续检查进度和改变方向。Jarvis × Codex
-正是基于这套语音办公能力构建的 macOS 本地入口。
-
-说“嗨 Jarvis”后，全息 GUI 自动升起，并通过 Codex app-server V3 WebRTC
-进入同一个 Codex Voice 线程。它不模拟点击 Codex/ChatGPT 窗口、不绑定全局
-热键，也不创建第二套 GPT-Live 会话。认证复用本机 Codex 登录；语音、文字、
-任务执行和工具事件属于同一个 Codex thread。
-
-> 当前状态：已在 macOS 26 Apple Silicon 实机验证唤醒、实时转写、语音回复和
-> Codex 任务执行。Codex realtime conversation 仍是实验性 app-server 能力，
-> 上游协议升级时可能需要同步适配。
-
-## 为什么是现在
-
-[官方 Voice 文档](https://learn.chatgpt.com/docs/features/voice)已经明确：
-Voice 可以在 Chat、Work 和 Codex 中协调任务。用户可以在回复过程中打断，
-继续追问；当 Codex 开始工作后，还可以继续通过语音检查进度或调整方向。
-
-Jarvis 没有重新制造一套语音模型，而是补上了 Codex Voice 原本缺少的本地入口：
+## How it works
 
 ```text
-Codex 全双工式语音办公
+JarvisWakeListener (on-device speech recognition)
         ↓
-“嗨 Jarvis”本机唤醒
+Tauri / Rust host raises the Jarvis window
         ↓
-全息 GUI + 当前工作目录
+The wake listener releases the microphone
         ↓
-同一个 Codex thread 持续对话并执行任务
+WebView creates a WebRTC offer
+        ↓
+Codex app-server V3 realtime conversation
+        ↓
+One Codex thread for voice, text, tools, and project work
 ```
 
-这意味着你面对的不是一个只能回答问题的语音助手，而是一个可以边聊、边做、
-边汇报、边接受你纠正方向的 Codex 工作入口。
+The Swift wake helper and the Voice session never capture the microphone at the
+same time. See [Architecture](docs/ARCHITECTURE.md) for the runtime, thread, and
+trust boundaries.
 
-## 三分钟上手
+## Quick start
 
-1. 在 Mac 上安装并登录 Codex App、ChatGPT App 或 Codex CLI。
-2. 打开 DMG，把 `Jarvis Codex` 拖入“应用程序”。
-3. 首次启动时允许麦克风和语音识别权限。
-4. 点击右上角“设置”，选择希望 Codex 工作的项目目录。
-5. 关闭窗口即可让 Jarvis 留在后台监听。
-6. 对电脑说“嗨 Jarvis”，窗口升起后直接说出任务。
-7. 将鼠标移到 Jarvis 头像上可显示控制按钮；点击 `STOP` 可立即中断 Voice 和正在进行的任务。
+1. Install and sign in to Codex App, ChatGPT App, or Codex CLI on your Mac.
+2. Download the latest DMG and drag `Jarvis Codex` into Applications.
+3. Allow microphone and speech-recognition access on first launch.
+4. Open Settings and select the project directory Codex should work in.
+5. Close the window to leave Jarvis listening in the background.
+6. Say “Hey Jarvis,” then speak your task when the window appears.
+7. Move the pointer over Jarvis to reveal controls; select `STOP` to interrupt
+   Voice and the active task.
 
-Voice 临时不可用时，可以在底部输入框发送文字任务。语音和文字会进入当前
-工作目录对应的同一个 Codex thread；切换工作目录时，Jarvis 会切换到该目录
-自己的任务上下文。
+If Voice is unavailable, use the text field at the bottom. Voice and text use
+the thread associated with the current workspace.
 
-## 使用场景
+## Permission profiles
 
-### 全双工式语音协作
+| Profile | Sandbox | Approval policy | Intended use |
+| --- | --- | --- | --- |
+| Safe | `workspace-write` | `on-request` | Confirm operations when needed |
+| Auto | `workspace-write` | `never` | Work autonomously inside the workspace |
+| Full | `danger-full-access` | `never` | Explicitly enabled high-trust work |
 
-你不必等 Jarvis 说完再重新开始一轮。可以在回复中打断、补充条件、追问进度，
-或者在 Codex 工作时改变方向：
+Permission profile values are validated by the Rust host. The frontend cannot
+send arbitrary sandbox or approval-policy strings.
 
-> “先停一下，不要改接口，只修测试。”
+## Requirements
 
-> “现在做到哪一步了？有阻塞就直接告诉我。”
+For regular use:
 
-### 边说边改代码
+- macOS 13 or later
+- Apple Silicon for the currently published DMG
+- Codex App, ChatGPT App, or Codex CLI installed and signed in
+- Microphone and speech-recognition permission
 
-> “嗨 Jarvis，检查这个项目为什么测试失败，找到原因并修复。”
+For source development:
 
-Jarvis 会把任务交给当前工作目录中的 Codex，执行检查、修改和验证，再通过
-Voice 回报结果。
+- Node.js 20 or later
+- Rust stable with `rustfmt` and `clippy`
+- Xcode Command Line Tools and Swift
 
-### 研究代码库
-
-> “嗨 Jarvis，先读一下这个仓库，告诉我认证流程从哪里进入。”
-
-适合阅读陌生项目、追踪调用链、解释模块关系和定位配置。
-
-### 审查与重构
-
-> “嗨 Jarvis，检查我刚才的修改有没有安全风险，不要直接提交。”
-
-适合代码审查、风险检查、补测试和小范围重构；高风险操作仍需要在界面确认。
-
-### 生成项目材料
-
-> “嗨 Jarvis，根据当前代码更新 README，再给我一份发布清单。”
-
-适合维护说明文档、架构文档、变更记录和交付材料。
-
-## 功能
-
-- 本机唤醒词：嗨/嘿 Jarvis、Hi/Hey Jarvis、嗨/嘿贾维斯
-- Tauri 2 + Rust + TypeScript 全息桌面 GUI
-- 透明无边框头像界面与粒子/装甲聚合唤醒动画
-- 头像悬停显示控制区，待机时自动隐藏外围按钮
-- 确认、授权、完成和异常四类沟通动作反馈
-- 原生 AVFoundation 权限预检和 Hardened Runtime 音频 entitlement
-- WebRTC 麦克风输入、实时音频输出和字幕
-- `thread/realtime/start` V3 直连 Codex Voice
-- Voice 自动调用 Codex 完成真实任务并继续语音回报
-- STOP 终止 Voice、抑制 transcript tail，并中断晚到的 turn
-- 文本输入可加入当前 Voice thread
-- 工作目录可配置，每个目录持久化并续接自己的 Codex thread
-- 安全、自动办公和完全访问三档 Codex 权限，可在 Jarvis 设置中切换
-- 可随时“新开线程”：停止当前任务并创建新的 Codex thread，旧线程仍保留在 Codex 历史中
-- 自动办公默认限制在当前工作目录内，越界操作不弹窗并直接失败
-- 登录时后台启动，关闭窗口仅隐藏，继续监听唤醒词
-- 语音唤醒会激活 macOS 应用并把 Jarvis 窗口升到最前层
-
-## 系统要求
-
-- macOS 13 或更高版本
-- 当前 DMG 面向 Apple Silicon
-- 已安装并登录 Codex App、ChatGPT App 或 Codex CLI
-- 麦克风和语音识别权限
-
-普通安装用户不需要 Node.js 或 Rust。它们只用于源码开发和构建。
-
-## 本地开发
-
-开发环境需要 Node.js 20+ 和 Rust stable。
+## Development
 
 ```bash
 npm ci
@@ -176,55 +138,71 @@ npm run check
 npm run dev
 ```
 
-设置开发时默认工作目录：
+To set the initial development workspace:
 
 ```bash
 JARVIS_WORKSPACE=/absolute/path npm run dev
 ```
 
-也可以在 Jarvis 设置面板保存工作目录；重启后生效。
+You can also save a workspace in Jarvis Settings.
 
-## 构建
+## Testing
+
+Before opening a pull request, run:
+
+```bash
+npm run check
+npm run build
+```
+
+Changes to wake, microphone, Voice, STOP, thread resumption, permissions, or
+packaging also require a real macOS smoke test. The current automated tests
+verify important protocol and lifecycle invariants, but cannot prove that the
+experimental realtime service or macOS privacy prompts work end to end.
+
+## Build
 
 ```bash
 npm run build
 ```
 
-输出：
+Expected outputs:
 
 - `src-tauri/target/release/bundle/macos/Jarvis Codex.app`
 - `src-tauri/target/release/bundle/dmg/Jarvis Codex_0.2.0_aarch64.dmg`
 
-构建脚本会生成并签名 `JarvisWakeListener.app`。该产物不进入 Git。
+The build script creates and signs `JarvisWakeListener.app`. The generated app
+bundle is not committed to Git.
 
-## 生产发布
+## Production releases
 
-当前仓库默认用 ad-hoc 身份 `-` 方便本机开发。对外分发必须使用 Apple
-Developer ID Application 证书并完成 notarization；否则 macOS 无法稳定识别升级
-前后的同一应用身份，用户也可能再次遇到权限提示。
+Local builds use the ad-hoc signing identity `-`. Public distribution requires
+an Apple Developer ID Application certificate and notarization. Do not publish
+an ad-hoc build as a production release.
 
-安装证书后，可用 Tauri 支持的环境变量覆盖本地 ad-hoc 配置：
+See the [production release checklist](docs/PRODUCTION.md) for signing,
+notarization, entitlement, and smoke-test requirements.
 
-```bash
-APPLE_SIGNING_IDENTITY="Developer ID Application: Example (TEAMID)" \
-APPLE_API_ISSUER="..." \
-APPLE_API_KEY="..." \
-APPLE_API_KEY_PATH="/absolute/path/AuthKey_XXX.p8" \
-npm run build
-```
+## Privacy and security
 
-证书、私钥和 Apple 凭据不得提交到仓库。详见
-[生产发布清单](docs/PRODUCTION.md)。
+- Wake recognition requires on-device speech recognition.
+- Microphone audio reaches Codex Voice only after wake.
+- Raw audio and login credentials are not stored by Jarvis.
+- The WebView uses a restrictive content security policy.
+- Automatic mode remains confined to the selected workspace.
+- Full access must be selected explicitly.
+- Siri is not part of the runtime path.
 
-## 隐私与安全
+Please report vulnerabilities according to [SECURITY.md](SECURITY.md), not in a
+public issue.
 
-- 唤醒词强制使用 `requiresOnDeviceRecognition` 在本机识别。
-- 只有唤醒后，麦克风音频才进入 Codex Voice WebRTC 会话。
-- 不保存原始音频，不读取或写入登录凭据。
-- WebView 使用限制性 CSP，不加载第三方字体或脚本。
-- 默认使用“自动办公”：`workspace-write` sandbox 和 `never` approval；
-  “安全模式”保留交互审批，“完全访问”需要用户主动选择。
-- Siri 不参与主链路。
+## License
 
-架构和信任边界见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，安全问题报告方式
-见 [SECURITY.md](SECURITY.md)。
+Jarvis × Codex is released under the [GNU General Public License v3.0](LICENSE).
+
+## Contributing
+
+Contributions are welcome. The `main` branch is protected and does not accept
+direct pushes. Contributors must fork the repository, create a branch in their
+fork, and open a pull request. Read [CONTRIBUTING.md](CONTRIBUTING.md) before
+starting work.
