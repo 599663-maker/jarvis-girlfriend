@@ -18,6 +18,9 @@ pub struct MatteOutput {
     /// Face/mouth/eye boxes, normalised to the artwork. `null` when the tool
     /// found no face, in which case the still character cannot talk.
     pub face: serde_json::Value,
+    /// Hands and feet for the idle pose pass; `null` until the portrait has
+    /// been looked at with `--body`.
+    pub body: serde_json::Value,
 }
 
 fn tool_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -43,6 +46,24 @@ fn parse_face(stdout: &str) -> serde_json::Value {
         .unwrap_or(serde_json::Value::Null)
 }
 
+fn parse_body(stdout: &str) -> serde_json::Value {
+    serde_json::from_str::<serde_json::Value>(stdout.trim())
+        .ok()
+        .and_then(|value| {
+            let hands = value.get("hands").cloned();
+            let feet = value.get("feet").cloned();
+            if hands.is_none() && feet.is_none() {
+                None
+            } else {
+                Some(serde_json::json!({
+                    "hands": hands.unwrap_or_else(|| serde_json::json!([])),
+                    "feet": feet.unwrap_or_else(|| serde_json::json!([])),
+                }))
+            }
+        })
+        .unwrap_or(serde_json::Value::Null)
+}
+
 /// Face geometry of an existing portrait, used for characters that were saved
 /// before their artwork could be worked out.
 pub fn face_geometry(app: &AppHandle, input: &Path) -> Result<serde_json::Value, String> {
@@ -58,6 +79,20 @@ pub fn face_geometry(app: &AppHandle, input: &Path) -> Result<serde_json::Value,
         return Err("这张图里没有找到人脸。".to_owned());
     }
     Ok(face)
+}
+
+/// Hands and feet of a portrait, for the idle pose pass. Detection never
+/// fails: artwork without visible hands or feet simply returns empty arrays,
+/// and the HUD falls back to face-only animation.
+pub fn body_geometry(app: &AppHandle, input: &Path) -> Result<serde_json::Value, String> {
+    let tool = tool_path(app)?;
+    let output = Command::new(&tool)
+        .arg("--body")
+        .arg(input)
+        .output()
+        .map_err(|error| format!("无法运行姿态识别：{error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_body(&stdout))
 }
 
 fn parse_dimensions(stdout: &str) -> (u32, u32) {
@@ -99,6 +134,7 @@ pub fn extract_subject(
         width,
         height,
         face: parse_face(&stdout),
+        body: serde_json::Value::Null,
     })
 }
 

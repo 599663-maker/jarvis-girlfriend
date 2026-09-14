@@ -1,6 +1,8 @@
 // Talking stills: the character keeps her face on screen between calls, so the
-// artwork itself has to move — lips while she speaks, eyes that blink, and a
-// small expression shift that follows the conversation.
+// artwork itself has to move — lips while she speaks, eyes that blink, a small
+// expression shift that follows the conversation, and now an idle pass that
+// keeps the whole body alive: hands that drift and gesture, feet that shift
+// weight, a chest that breathes.
 //
 // Everything is drawn as feathered patches taken from the portrait: the jaw and
 // lip band are stretched downward for each syllable, a soft shadow opens
@@ -16,6 +18,9 @@ export type FaceGeometry = {
   mouth?: FaceBox;
   leftEye?: FaceBox;
   rightEye?: FaceBox;
+  /** Hands and feet for the idle pose pass; absent for portraits without them. */
+  hands?: FaceBox[];
+  feet?: FaceBox[];
 };
 
 export type Mood = "idle" | "happy" | "curious" | "thinking";
@@ -32,13 +37,43 @@ export function syllableEnvelope(ms: number): number {
   return Math.max(0, Math.min(1, carrier)) * gate;
 }
 
-/** Blink amount, 0..1. Fast down, faster up, every few seconds. */
+/**
+ * Blink amount, 0..1. A natural blink is a quick close with a slightly slower
+ * open, and real people do not blink on a metronome: the interval drifts, a
+ * double blink happens now and then, and every so often the eyes stay closed a
+ * beat longer. All of that is folded into the phase maths below so the loop
+ * stays stateless and cheap.
+ */
 export function blinkAt(ms: number): number {
-  const period = 4200;
-  const phase = (ms % period) / period;
-  if (phase > 0.06) return 0;
-  const progress = phase / 0.06;
-  return progress < 0.5 ? progress * 2 : (1 - progress) * 2;
+  const t = ms / 1000;
+  // Which blink slot are we in? The slot length itself wanders between
+  // roughly 2.6s and 6s, so the rhythm never reads as a loop.
+  const slot = 3.9 + 1.35 * Math.sin(t * 0.42 + 1.3);
+  const slotPhase = (t % slot) / slot;
+  // Most slots hold one blink; one in five holds two, back to back.
+  const slotIndex = Math.floor(t / slot);
+  const double = hash01(slotIndex) < 0.2;
+  const blinkPos = double ? 0.06 : 0.08;
+  const close = 0.075; // fraction of the slot spent closing/opening
+  if (slotPhase < blinkPos) return 0;
+  const progress = (slotPhase - blinkPos) / close;
+  if (progress > 1) {
+    if (double) {
+      const second = (slotPhase - blinkPos - close * 2.1) / close;
+      if (second >= 0 && second < 1) {
+        return second < 0.42 ? second / 0.42 : 1 - (second - 0.42) / 0.58;
+      }
+    }
+    return 0;
+  }
+  // Down fast, up a touch slower.
+  return progress < 0.42 ? progress / 0.42 : 1 - (progress - 0.42) / 0.58;
+}
+
+/** Deterministic 0..1 hash so a blink decision does not jump between frames. */
+function hash01(n: number): number {
+  const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
 }
 
 /**
@@ -60,7 +95,11 @@ type PatchTransform = {
   /** Where the stretch is anchored: the edge that stays put. */
   anchor?: "top" | "bottom" | "center";
   brightness?: number;
+  /** Whole-patch drift in canvas pixels, used by the idle limb passes. */
+  shiftX?: number;
   shiftY?: number;
+  /** Small rotation around the patch centre, in radians. */
+  rotate?: number;
 };
 
 export type FaceAnimator = {
@@ -84,6 +123,10 @@ type Patches = {
   /** Lower lip to chin, for the jaw drop. */
   jaw: FaceBox;
   eyes: FaceBox[];
+  /** Idle pose patches: hands, feet and the breathing chest. */
+  hands: FaceBox[];
+  feet: FaceBox[];
+  chest: FaceBox | null;
 };
 
 /**
@@ -129,7 +172,37 @@ function patchesFor(boxes: FaceGeometry): Patches {
       w: Math.max(eye.w, eyeW) * 1.5,
       h: Math.max(eye.h * 2.4, eyeH),
     }));
-  return { face, lips, jaw, eyes };
+
+  // Hands and feet arrive from the body pass already padded around the actual
+  // limb; a small extra margin keeps the feathered edge away from the fingers.
+  const hands = (boxes.hands ?? [])
+    .slice(0, 2)
+    .map((hand) => grow(hand, 0.22, 0.25));
+  const feet = (boxes.feet ?? [])
+    .slice(0, 2)
+    .map((foot) => grow(foot, 0.35, 0.12));
+
+  // The chest rides the breath: a band from below the chin to the bottom of
+  // the face box, wider than the face so the shoulders move with the air.
+  const chestTop = Math.min(1, face.y + face.h * 1.05);
+  const chestH = Math.min(1 - chestTop, Math.max(face.h * 0.85, 0.12));
+  const chest = {
+    x: Math.max(0, face.x - face.w * 0.42),
+    y: chestTop,
+    w: Math.min(1, face.w * 1.84),
+    h: chestH,
+  };
+
+  return { face, lips, jaw, eyes, hands, feet, chest };
+}
+
+/** Grows a box around its centre, clamped to the unit image. */
+function grow(box: FaceBox, fx: number, fy: number): FaceBox {
+  const w = Math.min(1, box.w * (1 + fx));
+  const h = Math.min(1, box.h * (1 + fy));
+  const x = Math.max(0, box.x + box.w / 2 - w / 2);
+  const y = Math.max(0, box.y + box.h / 2 - h / 2);
+  return { x, y, w, h };
 }
 
 let scratch: HTMLCanvasElement | null = null;
@@ -203,10 +276,14 @@ export function createFaceAnimator(
     // The patch grows away from its anchor, so the chin or the brow stays put.
     const outW = dw * scaleX;
     const outH = dh * scaleY;
-    const outX = dx + (dw - outW) / 2;
+    const rotate = transform.rotate ?? 0;
+    const cos = Math.abs(Math.cos(rotate));
+    const sin = Math.abs(Math.sin(rotate));
+    const outX = dx + (dw - outW) / 2 + (transform.shiftX ?? 0);
     const outY = dy + (dh - outH) * anchorY + (transform.shiftY ?? 0);
-    const padX = outW * 0.55;
-    const padY = outH * 0.55;
+    // A rotated patch needs a square-ish scratch canvas to hold its corners.
+    const padX = outW * 0.55 + outH * sin * 0.5;
+    const padY = outH * 0.55 + outW * sin * 0.5;
     const scratchW = outW + padX * 2;
     const scratchH = outH + padY * 2;
     const scratchCtx = scratchContext(scratchW * scale, scratchH * scale);
@@ -251,6 +328,9 @@ export function createFaceAnimator(
       ? ` brightness(${transform.brightness})`
       : "";
     context.filter = `blur(${soft.toFixed(2)}px)${brightness}`;
+    context.translate(outX + outW / 2, outY + outH / 2);
+    context.rotate(rotate);
+    context.translate(-(outX + outW / 2), -(outY + outH / 2));
     context.drawImage(
       scratchCtx.canvas,
       outX - padX,
@@ -308,20 +388,45 @@ export function createFaceAnimator(
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.clearRect(0, 0, canvas.width, canvas.height);
 
+    const t = now / 1000;
     const amp = speaking ? 0.25 + 0.75 * syllableEnvelope(now) : 0;
     const blink = blinkAt(now);
-    const breath = Math.sin((now / 1000) * 2 * Math.PI * 0.22) * 0.35;
+    const breath = Math.sin(t * 2 * Math.PI * 0.22) * 0.35;
+    // The whole character drifts on two very slow, incommensurate cycles so
+    // the sway never reads as a loop: a wide ~12.5s swing and a barely-there
+    // ~32s wander on top of it.
+    const swayX =
+      Math.sin(t * 2 * Math.PI * 0.08 + 1.1) * 2.6 +
+      Math.sin(t * 2 * Math.PI * 0.031) * 1.4;
+    const swayY = Math.sin(t * 2 * Math.PI * 0.11 + 0.6) * 1.1 + breath * 0.4;
+    // The portrait itself sways, so the whole body moves as one instead of
+    // patches sliding over a frozen photograph. The canvas rides the same
+    // transform, which keeps every patch glued to the face it belongs to.
+    source.style.transform = `translate3d(${swayX.toFixed(2)}px, ${swayY.toFixed(2)}px, 0) scale(var(--voice-pulse))`;
+    canvas.style.transform = `translate3d(${swayX.toFixed(2)}px, ${swayY.toFixed(2)}px, 0)`;
+
     const tilt =
       mood === "curious" ? -1.6 : mood === "thinking" ? 1.4 : mood === "happy" ? 0.8 : 0;
 
-    // The whole head moves first; the patches ride along with it.
+    // The head moves a little more than the body: a degree of tilt for the
+    // mood and, while speaking, a soft nod. The patches ride along with it.
     const face = patches.face;
     context.save();
     const centreX = (face.x + face.w / 2) * size.width;
     const centreY = (face.y + face.h * 0.72) * size.height;
     context.translate(centreX, centreY);
-    context.rotate(((tilt + (speaking ? Math.sin(now / 260) * 0.5 : 0)) * Math.PI) / 180);
-    context.translate(-centreX, -centreY + (breath + (speaking ? Math.sin(now / 190) * 0.6 : 0)) * size.scale);
+    context.rotate(
+      ((tilt +
+        Math.sin(t * 2 * Math.PI * 0.05) * 0.45 +
+        (speaking ? Math.sin(now / 260) * 0.5 : 0)) *
+        Math.PI) /
+        180,
+    );
+    context.translate(
+      -centreX,
+      -centreY +
+        (breath + (speaking ? Math.sin(now / 190) * 0.6 : 0)) * size.scale,
+    );
 
     // A repaint of the whole face is only worth it when the expression calls
     // for one: at rest the artwork is already on screen underneath.
@@ -351,6 +456,42 @@ export function createFaceAnimator(
       });
     }
     context.restore();
+
+    // ---- Idle pose pass -------------------------------------------------
+    // The chest swells with the breath; hands drift and turn with their own
+    // slow phases; the feet take turns carrying the weight. All of it is a
+    // few pixels, which is exactly how far a person moves at rest.
+    if (patches.chest) {
+      const chestSwell = 1 + (breath * 0.5 + Math.sin(t * 2 * Math.PI * 0.13)) * 0.0045;
+      drawPatch(patches.chest, size, {
+        scaleY: chestSwell,
+        anchor: "bottom",
+        brightness: 1.0,
+      });
+    }
+    patches.hands.forEach((hand, index) => {
+      const phase = index === 0 ? 0 : Math.PI * 0.83;
+      const bob = Math.sin(t * 2 * Math.PI * 0.07 + phase);
+      const drift = Math.sin(t * 2 * Math.PI * 0.045 + phase * 1.7);
+      const gesture = gestureWave(t, index);
+      drawPatch(hand, size, {
+        shiftX: drift * 1.4 + gesture * 2.2 * (index === 0 ? 1 : -1),
+        shiftY: bob * 1.1 + Math.max(0, gesture) * 3.2,
+        rotate: (bob * 0.012 + gesture * 0.035) * (index === 0 ? 1 : -1),
+        anchor: "center",
+        brightness: 1.005,
+      });
+    });
+    patches.feet.forEach((foot, index) => {
+      const phase = index === 0 ? 0 : Math.PI;
+      const lift = Math.max(0, Math.sin(t * 2 * Math.PI * 0.05 + phase)) * 0.06;
+      drawPatch(foot, size, {
+        scaleY: 1 - lift * 0.5,
+        shiftX: (index === 0 ? 1 : -1) * (0.5 + lift * 1.6),
+        anchor: "bottom",
+        brightness: 1.0,
+      });
+    });
   };
 
   return {
@@ -366,7 +507,11 @@ export function createFaceAnimator(
     setActive(next) {
       if (active === next) return;
       active = next;
-      if (!active && context) context.clearRect(0, 0, canvas.width, canvas.height);
+      if (!active) {
+        source.style.transform = "";
+        canvas.style.transform = "";
+        if (context) context.clearRect(0, 0, canvas.width, canvas.height);
+      }
     },
     start() {
       if (running) return;
@@ -376,7 +521,24 @@ export function createFaceAnimator(
     stop() {
       running = false;
       window.cancelAnimationFrame(frame);
+      source.style.transform = "";
+      canvas.style.transform = "";
       if (context) context.clearRect(0, 0, canvas.width, canvas.height);
     },
   };
+}
+
+/**
+ * A slow, occasional hand gesture: mostly at rest, every ~18s one hand drifts
+ * up and back down over about four seconds — a small "adjusting her sleeve"
+ * or "resting a thought" movement rather than a wave.
+ */
+function gestureWave(t: number, index: number): number {
+  const period = 18 + index * 3.7;
+  const phase = ((t + index * 7.3) % period) / period;
+  if (phase < 0.24) {
+    const p = phase / 0.24;
+    return Math.sin(p * Math.PI) * 0.9;
+  }
+  return 0;
 }

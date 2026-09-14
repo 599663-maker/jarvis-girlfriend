@@ -2616,6 +2616,7 @@ pub fn run() {
             avatars::avatars,
             avatars::avatar_image,
             avatars::avatar_face,
+            avatars::avatar_body,
             avatars::create_avatar,
             avatars::set_active_avatar,
             avatars::delete_avatar,

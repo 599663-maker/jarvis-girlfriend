@@ -48,6 +48,10 @@ pub struct Avatar {
     /// live call. `null` until the artwork has been looked at.
     #[serde(default)]
     pub face: Value,
+    /// Hand and feet boxes for the idle pose pass (sway, breathing, small
+    /// gestures). `null` until the portrait has been looked at.
+    #[serde(default)]
+    pub body: Value,
     #[serde(rename = "createdAt", default)]
     pub created_at: u64,
 }
@@ -81,6 +85,7 @@ pub fn builtin_avatar() -> Avatar {
         prompt: "内置形象".to_owned(),
         greeting: crate::WAKE_GREETING.to_owned(),
         face: Value::Null,
+        body: Value::Null,
         created_at: 0,
     }
 }
@@ -217,6 +222,8 @@ pub struct AvatarView {
     pub has_green_portrait: bool,
     /// Where her face is, so the still artwork can talk between calls.
     pub face: Value,
+    /// Hands and feet of the artwork, for the idle pose pass.
+    pub body: Value,
 }
 
 fn voice_label(pack_id: &str) -> String {
@@ -237,6 +244,7 @@ fn view(avatar: &Avatar) -> AvatarView {
         live_voice: crate::live::live_voice(avatar),
         live_voice_label: live_voice_label(&crate::live::live_voice(avatar)),
         face: avatar.face.clone(),
+        body: avatar.body.clone(),
         has_green_portrait: crate::live::green_portrait(avatar).is_some(),
     }
 }
@@ -463,7 +471,9 @@ pub async fn create_avatar_from_image(
                     "message": format!("已抠出人物主体（{}×{}）", matte.width, matte.height)
                 }),
             );
+            let body = matte.body.clone();
             let face = matte.face.clone();
+            let _ = body;
             (adopt_portrait(&id, &matte)?, face)
         }
         Err(error) => {
@@ -493,6 +503,7 @@ pub async fn create_avatar_from_image(
         prompt: "本地图片导入".to_owned(),
         greeting: format!("{name}在此，主人请吩咐！"),
         face,
+        body: Value::Null,
         created_at: unix_millis(),
     };
     let mut avatars = store.avatars;
@@ -538,6 +549,35 @@ pub async fn avatar_face(app: AppHandle, id: String) -> Result<Value, String> {
         let _ = save_store(&store);
     }
     Ok(face)
+}
+
+/// Hands and feet of a character's artwork, for the idle pose pass. Detected
+/// lazily on first request and remembered, exactly like the face geometry.
+#[tauri::command]
+pub async fn avatar_body(app: AppHandle, id: String) -> Result<Value, String> {
+    let store = load_store();
+    let Some(avatar) = store.avatars.iter().find(|avatar| avatar.id == id) else {
+        return Err(format!("没有找到形象 {id}。"));
+    };
+    if !avatar.body.is_null() {
+        return Ok(avatar.body.clone());
+    }
+    let Some(portrait) = crate::live::portrait_path_for(avatar) else {
+        return Ok(Value::Null);
+    };
+    let probe = app.clone();
+    let body = tauri::async_runtime::spawn_blocking(move || {
+        crate::matte::body_geometry(&probe, &portrait)
+    })
+    .await
+    .map_err(|error| format!("姿态识别任务异常：{error}"))?
+    .unwrap_or_else(|_| serde_json::json!({ "hands": [], "feet": [] }));
+    let mut store = load_store();
+    if let Some(target) = store.avatars.iter_mut().find(|avatar| avatar.id == id) {
+        target.body = body.clone();
+        let _ = save_store(&store);
+    }
+    Ok(body)
 }
 
 #[tauri::command]
@@ -640,6 +680,7 @@ pub async fn create_avatar(
         prompt,
         greeting: format!("{name}在此，主人请吩咐！"),
         face: Value::Null,
+        body: Value::Null,
         created_at: unix_millis(),
     };
     avatars.push(avatar.clone());
@@ -734,6 +775,7 @@ mod tests {
             voice_pack: "girl".to_owned(),
             persona: String::new(),
             face: serde_json::Value::Null,
+            body: serde_json::Value::Null,
             image_file: "av1.png".to_owned(),
             live_voice: String::new(),
             live_asset_id: String::new(),

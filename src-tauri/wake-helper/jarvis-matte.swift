@@ -1,15 +1,3 @@
-//! jarvis-matte — lifts the subject out of a character portrait.
-//!
-//! New characters are usually handed to us as a finished illustration with a
-//! painted-on background (a checkerboard, a studio wall, a gradient). The live
-//! digital human needs the character alone, so this tool runs Apple's
-//! foreground-instance matting and writes two files:
-//!
-//!   portrait.png  the cut-out with a real alpha channel (HUD artwork)
-//!   green.png     the same cut-out over chroma-key green (Vidu digital human)
-//!
-//! Usage: jarvis-matte <input image> <output directory>
-
 import CoreGraphics
 import CoreImage
 import Foundation
@@ -47,6 +35,20 @@ if arguments.count >= 3, arguments[1] == "--face" {
     }
     let geometry = faceGeometryJSON(in: probe) ?? "null"
     print("{\"face\": \(geometry)}")
+    exit(0)
+}
+
+/// `--body <image>` reports hands and feet for the idle pose pass. They ride
+/// alongside the face geometry so the still character can also fidget, sway
+/// and shift her weight while nothing else is happening.
+if arguments.count >= 3, arguments[1] == "--body" {
+    let url = URL(fileURLWithPath: arguments[2])
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+          let probe = CGImageSourceCreateImageAtIndex(source, 0, nil)
+    else {
+        fail("cannot read \(url.path)", 3)
+    }
+    print(bodyGeometryJSON(in: probe))
     exit(0)
 }
 
@@ -175,6 +177,114 @@ func faceGeometryJSON(in image: CGImage) -> String? {
     }
     guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
     return String(data: data, encoding: .utf8)
+}
+
+// ---------------------------------------------------------------------------
+// Body geometry: hands and feet
+//
+// The same portrait gets a second look for the idle pose pass. Vision's body
+// pose gives the wrists and ankles, and its hand pose gives a box around each
+// hand; the two are merged so a hand that Vision sees only in one pass still
+// gets a box. Everything is normalised like the face above.
+// ---------------------------------------------------------------------------
+
+func pointBox(_ point: CGPoint, width: CGFloat, height: CGFloat) -> CGRect {
+    CGRect(x: point.x - width / 2, y: point.y - height / 2, width: width, height: height)
+}
+
+func bodyGeometryJSON(in image: CGImage) -> String {
+    let imageW = CGFloat(image.width)
+    let imageH = CGFloat(image.height)
+    var hands: [[String: Double]] = []
+    var feet: [[String: Double]] = []
+
+    let handRequest = VNDetectHumanHandPoseRequest()
+    handRequest.maximumHandCount = 2
+    let handHandler = VNImageRequestHandler(cgImage: image, options: [:])
+    if (try? handHandler.perform([handRequest])) != nil {
+        for observation in handRequest.results ?? [] {
+            let points = [
+                try? observation.recognizedPoint(.wrist),
+                try? observation.recognizedPoint(.indexTip),
+                try? observation.recognizedPoint(.middleTip),
+                try? observation.recognizedPoint(.ringTip),
+                try? observation.recognizedPoint(.littleTip),
+                try? observation.recognizedPoint(.thumbTip),
+            ].compactMap { $0 }.filter { $0.confidence > 0.3 }
+            guard points.count >= 2 else { continue }
+            let xs = points.map { $0.location.x }
+            let ys = points.map { $0.location.y }
+            let minX = xs.min()!
+            let maxX = xs.max()!
+            let minY = ys.min()!
+            let maxY = ys.max()!
+            let spanX = maxX - minX
+            let spanY = maxY - minY
+            let box = CGRect(
+                x: max(0, minX - spanX * 0.6),
+                y: max(0, minY - spanY * 0.7),
+                width: min(1, spanX * 2.2),
+                height: min(1, spanY * 2.4)
+            )
+            hands.append([
+                "x": Double(box.minX),
+                "y": Double(1 - box.maxY),
+                "w": Double(box.width),
+                "h": Double(box.height),
+            ])
+        }
+    }
+
+    let bodyRequest = VNDetectHumanBodyPoseRequest()
+    let bodyHandler = VNImageRequestHandler(cgImage: image, options: [:])
+    if (try? bodyHandler.perform([bodyRequest])) != nil,
+       let observation = bodyRequest.results?.first
+    {
+        let joints: [VNHumanBodyPoseObservation.JointName] = [.leftWrist, .rightWrist, .leftAnkle, .rightAnkle]
+        var wrists: [CGPoint] = []
+        var ankles: [CGPoint] = []
+        for joint in joints {
+            guard let point = try? observation.recognizedPoint(joint), point.confidence > 0.2 else { continue }
+            if joint == .leftWrist || joint == .rightWrist {
+                wrists.append(point.location)
+            } else {
+                ankles.append(point.location)
+            }
+        }
+        // Hands seen only by the body pose (or missed by the hand pose) fall
+        // back to a wrist box.
+        for wrist in wrists {
+            let covered = hands.contains { box in
+                let x = CGFloat(box["x"] ?? 0)
+                let y = CGFloat(box["y"] ?? 0)
+                let w = CGFloat(box["w"] ?? 0)
+                let h = CGFloat(box["h"] ?? 0)
+                let top = y + h
+                return wrist.x > x - w * 0.5 && wrist.x < x + w * 1.5 && wrist.y > top - h * 1.4 && wrist.y < top + h * 0.6
+            }
+            if covered { continue }
+            let box = pointBox(wrist, width: 0.09, height: 0.09)
+            hands.append([
+                "x": Double(max(0, box.minX)),
+                "y": Double(1 - box.maxY),
+                "w": Double(min(1, box.width)),
+                "h": Double(min(1, box.height)),
+            ])
+        }
+        for ankle in ankles {
+            let box = pointBox(ankle, width: 0.075, height: 0.05)
+            feet.append([
+                "x": Double(max(0, box.minX)),
+                "y": Double(1 - box.maxY),
+                "w": Double(min(1, box.width)),
+                "h": Double(min(1, box.height)),
+            ])
+        }
+    }
+
+    let payload: [String: Any] = ["hands": hands, "feet": feet]
+    guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return "{}" }
+    return String(data: data, encoding: .utf8) ?? "{}"
 }
 
 let faceJSON = faceGeometryJSON(in: image) ?? "null"

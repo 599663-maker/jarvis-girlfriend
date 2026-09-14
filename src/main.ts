@@ -9,7 +9,7 @@ import { matchVisionCommand } from "./vision-command";
 import { matchCallCommand, matchLiveCommand } from "./live-command";
 import { LiveCall, type LiveStage } from "./live";
 import { cutPortraitBackground } from "./chroma";
-import { createFaceAnimator, moodFor, type FaceAnimator, type FaceGeometry } from "./face";
+import { createFaceAnimator, moodFor, type FaceAnimator, type FaceBox, type FaceGeometry } from "./face";
 
 type Mode = "booting" | "ready" | "voice-starting" | "listening" | "working" | "speaking" | "degraded" | "stopped";
 type Message = { id?: number | string; method?: string; params?: any };
@@ -49,6 +49,8 @@ type AvatarInfo = AvatarName & {
   hasGreenPortrait: boolean;
   /** Face boxes of the artwork: the still character talks with them. */
   face?: FaceGeometry | null;
+  /** Hands and feet boxes for the idle pose pass (sway, breath, gestures). */
+  body?: { hands?: FaceBox[]; feet?: FaceBox[] } | null;
 };
 type AvatarSnapshot = {
   activeId: string;
@@ -1623,8 +1625,15 @@ async function refreshFace() {
     stopFace();
     return;
   }
-  if (!faceAnimator) faceAnimator = createFaceAnimator(faceCanvas, characterImage, geometry);
-  else faceAnimator.setGeometry(geometry);
+  // The idle pose pass needs hands and feet. They are detected once and cached
+  // next to the face, exactly like the face itself.
+  const body = avatar.body ?? await invoke<{ hands?: FaceBox[]; feet?: FaceBox[] } | null>(
+    "avatar_body", { id: avatar.id },
+  ).catch(() => null);
+  if (body) avatar.body = body;
+  const liveGeometry: FaceGeometry = { ...geometry, hands: body?.hands ?? [], feet: body?.feet ?? [] };
+  if (!faceAnimator) faceAnimator = createFaceAnimator(faceCanvas, characterImage, liveGeometry);
+  else faceAnimator.setGeometry(liveGeometry);
   faceGeometryFor = avatar.id;
   faceAnimator.setSpeaking(state.mode === "speaking");
   faceAnimator.setMood(moodFor(response.textContent ?? ""));
