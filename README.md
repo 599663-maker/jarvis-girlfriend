@@ -60,7 +60,7 @@ Codex authentication and app-server runtime.
 
 ### v0.1.x — holographic workstation
 
-![Jarvis Codex v0.1.x holographic workstation](docs/images/jarvis-main-ui.png)
+![Jarvis Girlfriend v0.1.x holographic workstation](docs/images/jarvis-main-ui.png)
 
 The first version used a persistent HUD with task roles, transcripts, text
 input, and STOP controls. It emphasized visibility into what Codex was doing.

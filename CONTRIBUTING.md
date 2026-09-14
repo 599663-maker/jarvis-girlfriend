@@ -30,8 +30,8 @@ maintainers. Every change must be reviewed and merged through a pull request.
 Example:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/jarvis-codex.git
-cd jarvis-codex
+git clone https://github.com/YOUR_USERNAME/jarvis-girlfriend.git
+cd jarvis-girlfriend
 git remote add upstream https://github.com/599663-maker/jarvis-girlfriend.git
 git fetch upstream
 git switch -c fix/short-description upstream/main

@@ -56,7 +56,7 @@ GPT-Live 会话。它复用本机 Codex 的登录状态和 app-server runtime。
 
 ### v0.1.x：全息工作台
 
-![Jarvis Codex v0.1.x 全息工作台](docs/images/jarvis-main-ui.png)
+![Jarvis Girlfriend v0.1.x 全息工作台](docs/images/jarvis-main-ui.png)
 
 第一版采用完整 HUD 工作台，任务角色、对话记录、文字输入和 STOP 控制常驻页面，
 重点是让用户清楚地看到 Codex 正在做什么。
