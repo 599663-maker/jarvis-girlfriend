@@ -1633,6 +1633,7 @@ dependencies = [
  "objc2",
  "objc2-app-kit",
  "objc2-av-foundation",
+ "objc2-web-kit",
  "rodio",
  "serde",
  "serde_json",

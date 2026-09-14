@@ -115,14 +115,19 @@ fn portrait_path(avatar: &Avatar) -> Option<PathBuf> {
     path.exists().then_some(path)
 }
 
-/// The pre-rendered idle animation, once Vidu has produced and downloaded it.
+/// A pre-rendered scene animation, once Vidu has produced and downloaded it.
 /// `None` until the one-off generation has finished, so the UI falls back to
 /// the still portrait in the meantime.
-pub fn idle_video_path(avatar: &Avatar) -> Option<PathBuf> {
-    if avatar.idle_video_file.is_empty() {
+pub fn scene_video_path(avatar: &Avatar, scene: &str) -> Option<PathBuf> {
+    let file = match scene {
+        "greet" => &avatar.greet_video_file,
+        "wait" => &avatar.wait_video_file,
+        _ => return None,
+    };
+    if file.is_empty() {
         return None;
     }
-    let path = avatars::portraits_dir().ok()?.join(&avatar.idle_video_file);
+    let path = avatars::portraits_dir().ok()?.join(file);
     path.is_file().then_some(path)
 }
 

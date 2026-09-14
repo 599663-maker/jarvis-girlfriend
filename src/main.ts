@@ -9,7 +9,7 @@ import { matchVisionCommand } from "./vision-command";
 import { matchCallCommand, matchLiveCommand } from "./live-command";
 import { LiveCall, type LiveStage } from "./live";
 import { cutPortraitBackground } from "./chroma";
-import { IdlePlayer } from "./idle";
+import { ScenePlayer, type Scene } from "./idle";
 
 type Mode = "booting" | "ready" | "voice-starting" | "listening" | "working" | "speaking" | "degraded" | "stopped";
 type Message = { id?: number | string; method?: string; params?: any };
@@ -47,8 +47,10 @@ type AvatarInfo = AvatarName & {
   liveVoice: string;
   liveVoiceLabel: string;
   hasGreenPortrait: boolean;
-  /** A pre-rendered idle animation video is ready to play locally. */
-  hasIdleVideo: boolean;
+  /** The greeting wave is rendered and ready to play on open. */
+  hasGreetVideo: boolean;
+  /** The waiting pose is rendered and ready to play during questions. */
+  hasWaitVideo: boolean;
 };
 type AvatarSnapshot = {
   activeId: string;
@@ -147,7 +149,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         <div class="assembly-orbits" aria-hidden="true"><i></i><i></i><i></i></div>
         <div class="armor-shards" aria-hidden="true"></div>
         <img id="jarvis-character" class="helmet-character" src="/assets/jarvis-character-v2.png" alt="Jarvis holographic helmet">
-        <canvas id="idle-character" class="idle-character" hidden aria-hidden="true"></canvas>
+        <canvas id="scene-video" class="scene-video" hidden aria-hidden="true"></canvas>
         <canvas id="live-character" class="live-character" hidden aria-hidden="true"></canvas>
         <div class="helmet-scan"><i></i></div>
         <div class="assembly-flash" aria-hidden="true"></div>
@@ -816,10 +818,10 @@ function animationBudget(now: number) {
 function animationFrame(now: number) {
   if (!animationRunning) return;
   syncResting(!animationBusy() && now - lastActivityAt >= REST_AFTER_MS);
-  // The idle video is driven by a handful of shell classes: re-deriving its
-  // visibility here means the still can never get stuck after a hang-up,
-  // whatever order things unwound in.
-  updateIdleVisibility();
+  // The scene machine is driven by the shell state and the conversation
+  // mode: re-deriving it here means the stage can never get stuck after a
+  // hang-up, whatever order things unwound in.
+  updateScenePlayback();
   if (now - lastAnimationFrame >= animationBudget(now) - .6) {
     lastAnimationFrame = now;
     state.level *= .9;
@@ -1272,7 +1274,8 @@ if (currentWindow) {
     if (payload?.stage === "done" && payload.avatarId) {
       // The one-off render finished: drop the cached video and refresh the
       // list so the "动态形象" state and the on-stage loop catch up.
-      idleVideoCache.delete(payload.avatarId);
+      sceneVideoCache.delete(`${payload.avatarId}:greet`);
+      sceneVideoCache.delete(`${payload.avatarId}:wait`);
       void refreshAvatars();
     }
   });
@@ -1475,7 +1478,7 @@ function decodeImage(image: HTMLImageElement) {
 }
 
 function updateCharacterChrome(avatar: AvatarInfo | undefined) {
-  void refreshIdle(avatar);
+  void refreshScenes(avatar);
   const name = (avatar?.name ?? "Jarvis").trim() || "Jarvis";
   $("#brand-name").textContent = name.toUpperCase();
   $("#identity-role").textContent = `${name.toUpperCase()} CORE`;
@@ -1483,65 +1486,111 @@ function updateCharacterChrome(avatar: AvatarInfo | undefined) {
 }
 
 // ---------------------------------------------------------------------------
-// The idle loop. A pre-rendered local video replaces the still portrait: the
-// character breathes, blinks and shifts her weight without any patch layers.
-// Vidu renders it once; playback is entirely local. Only dialing a realtime
-// call connects to Vidu again.
+// Scene machine. Three scenes, each played by the matching local video that
+// Vidu rendered once:
+//   "greet"  — 打招呼挥手，刚打开窗口时播放一次；
+//   "wait"   — 手放在前、左右踱步，发问和回答时循环播放；
+//   "static" — 没有指令时回到静态立绘。
+// Playback is entirely local; only dialing a realtime call connects to Vidu.
 // ---------------------------------------------------------------------------
 
-const idleVideoCache = new Map<string, string>();
-const idleCanvas = $("#idle-character") as HTMLCanvasElement;
-const idlePlayer = new IdlePlayer(idleCanvas, {
+const sceneVideoCache = new Map<string, string>();
+const sceneCanvas = $("#scene-video") as HTMLCanvasElement;
+let greetPlayed = false;
+let greetSpoken = false;
+let windowShown = false;
+let activeScene: Scene = "static";
+let sceneAvatarId = "";
+let sceneSources: { greet: string | null; wait: string | null } = { greet: null, wait: null };
+const scenePlayer = new ScenePlayer(sceneCanvas, {
   onRevealed: () => {
-    // Vidu's live picture owns the stage during a call; only the idle loop
+    // Vidu's live picture owns the stage during a call; only a scene video
     // may push the still portrait aside.
     if (!shell.classList.contains("video-live")) characterImage.hidden = true;
   },
   onHidden: () => {
     if (!shell.classList.contains("video-live")) characterImage.hidden = false;
   },
+  onGreetFinished: () => {
+    greetPlayed = true;
+    updateScenePlayback();
+  },
 });
-let idleSourceFor = "";
-let idleWanted = false;
 
-function updateIdleVisibility() {
-  const live =
+const QUESTION_MODES: ReadonlySet<Mode> = new Set([
+  "voice-starting",
+  "listening",
+  "working",
+  "speaking",
+]);
+
+/** Which of the three scenes the stage should be showing right now. */
+function desiredScene(): Scene {
+  const busy =
     shell.classList.contains("video-live") ||
     shell.classList.contains("is-dialing") ||
     shell.classList.contains("is-transforming") ||
     shell.classList.contains("is-reforming");
-  const portrait = shell.classList.contains("custom-character");
-  const wanted = Boolean(idleSourceFor) && portrait && !live;
-  if (wanted !== idleWanted) {
-    idleWanted = wanted;
-    void invoke("web_log", {
-      message: `静息动画：${wanted ? "接管画面" : `退场：动图 ${live} · 立绘形象 ${portrait}`}`,
-    }).catch(() => {});
+  if (busy || !shell.classList.contains("custom-character") || !sceneAvatarId) {
+    return "static";
   }
-  idlePlayer.setVisible(wanted);
+  // Asking and answering: hands folded in front, small steps, waiting.
+  if (QUESTION_MODES.has(state.mode)) return sceneSources.wait ? "wait" : "static";
+  // The first screen after open: the greeting wave, once per session.
+  if (!greetPlayed && windowShown) return sceneSources.greet ? "greet" : "static";
+  // Nothing to do: back to the still portrait.
+  return "static";
 }
 
-/** Loads the active character's idle animation and lets it take the stage. */
-async function refreshIdle(avatar: AvatarInfo | undefined) {
-  if (!avatar || !avatar.hasIdleVideo) {
-    idleSourceFor = "";
-    idlePlayer.stop();
+function updateScenePlayback() {
+  const scene = desiredScene();
+  // A wave interrupted by a question must not wave again later: the session
+  // gets exactly one greeting.
+  if (activeScene === "greet" && scene !== "greet") greetPlayed = true;
+  if (scene !== activeScene) {
+    activeScene = scene;
+    const label =
+      scene === "greet" ? "打招呼挥手" : scene === "wait" ? "等待踱步" : "静态立绘";
+    void invoke("web_log", { message: `场景动画：切换到${label}` }).catch(() => {});
+    // Her voice starts together with the wave on the first open.
+    if (scene === "greet" && !greetSpoken) {
+      greetSpoken = true;
+      const greeting = avatars.find((item) => item.id === activeAvatar)?.greeting?.trim();
+      if (greeting) speakLine(greeting);
+    }
+  }
+  scenePlayer.setVisible(scene !== "static");
+  scenePlayer.playScene(scene);
+}
+
+/** Loads the active character's scene videos and lets the right one take the stage. */
+async function refreshScenes(avatar: AvatarInfo | undefined) {
+  if (!avatar || avatar.isBuiltin) {
+    sceneAvatarId = "";
+    sceneSources = { greet: null, wait: null };
+    scenePlayer.stop();
     return;
   }
-  let source = idleVideoCache.get(avatar.id) ?? null;
-  if (source === null) {
-    const fetched = await invoke<string | null>("avatar_idle_video", { id: avatar.id }).catch(() => null);
-    source = fetched;
-    if (source) idleVideoCache.set(avatar.id, source);
+  const sources: { greet: string | null; wait: string | null } = { greet: null, wait: null };
+  for (const scene of ["greet", "wait"] as const) {
+    const ready = scene === "greet" ? avatar.hasGreetVideo : avatar.hasWaitVideo;
+    if (!ready) continue;
+    const key = `${avatar.id}:${scene}`;
+    let source: string | null = sceneVideoCache.get(key) ?? null;
+    if (source === null) {
+      const fetched = await invoke<string | null>("avatar_scene_video", {
+        id: avatar.id,
+        scene,
+      }).catch(() => null);
+      source = fetched;
+      if (source) sceneVideoCache.set(key, source);
+    }
+    sources[scene] = source;
   }
-  if (!source) {
-    idleSourceFor = "";
-    idlePlayer.setVisible(false);
-    return;
-  }
-  idleSourceFor = avatar.id;
-  await idlePlayer.setSource(avatar.id, source);
-  updateIdleVisibility();
+  sceneAvatarId = avatar.id;
+  sceneSources = sources;
+  await scenePlayer.setScenes(avatar.id, sources);
+  updateScenePlayback();
 }
 
 async function portraitFor(avatar: AvatarInfo): Promise<string | null> {
@@ -1569,8 +1618,8 @@ async function applyAvatarArt(avatar: AvatarInfo) {
   characterImage.src = source;
   await decodeImage(characterImage).catch(() => {});
   shell.classList.toggle("custom-character", !avatar.isBuiltin);
-  await refreshIdle(avatar);
-  updateIdleVisibility();
+  await refreshScenes(avatar);
+  updateScenePlayback();
 }
 
 /// The particle tornado: the current character spins apart into the funnel,
@@ -1591,8 +1640,8 @@ async function playTransform(avatar: AvatarInfo) {
     await decodeImage(characterImage);
     shell.classList.remove("is-transforming");
     shell.classList.toggle("custom-character", !avatar.isBuiltin);
-    await refreshIdle(avatar);
-    updateIdleVisibility();
+    await refreshScenes(avatar);
+    updateScenePlayback();
     shell.classList.add("is-reforming");
     prepareVisualParticles(true);
     startParticleFormation(true, TRANSFORM_DURATION - TRANSFORM_FUNNEL);
@@ -1710,21 +1759,26 @@ function renderAvatarList() {
       const idle = document.createElement("button");
       idle.type = "button";
       idle.className = "avatar-idle";
-      idle.textContent = avatar.hasIdleVideo ? "重做动画" : "生成动画";
-      idle.title = avatar.hasIdleVideo
-        ? "重新渲染一次静息动画（会消耗 Vidu 积分）"
-        : "用 Vidu 渲染一次静息动画，之后本机循环播放，不再连接 Vidu";
+      const both = avatar.hasGreetVideo && avatar.hasWaitVideo;
+      const any = avatar.hasGreetVideo || avatar.hasWaitVideo;
+      idle.textContent = both ? "重做场景" : any ? "补全场景" : "生成场景";
+      idle.title = both
+        ? "重新渲染打招呼挥手与等待踱步两个动画（各消耗一次 Vidu 积分）"
+        : "用 Vidu 渲染「打招呼挥手」和「等待踱步」动画，之后本机播放，不再连接 Vidu";
       idle.addEventListener("click", async (event) => {
         event.preventDefault();
         idle.disabled = true;
         idle.textContent = "渲染中…";
         const progress = document.querySelector<HTMLElement>("#avatar-progress");
         try {
-          await invoke("generate_idle_video", { id: avatar.id });
+          await invoke("generate_scene_video", { id: avatar.id, scene: "greet" });
+          await invoke("generate_scene_video", { id: avatar.id, scene: "wait" });
           await refreshAvatars();
-          if (progress) progress.textContent = `${avatar.name} 的动态形象已就绪，静息时自动循环播放。`;
+          if (progress) progress.textContent = `${avatar.name} 的场景动画已就绪：打开时挥手，问答时踱步等待。`;
           if (avatar.id === activeAvatar) {
-            void refreshIdle(avatars.find((item) => item.id === activeAvatar));
+            sceneVideoCache.delete(`${avatar.id}:greet`);
+            sceneVideoCache.delete(`${avatar.id}:wait`);
+            void refreshScenes(avatars.find((item) => item.id === activeAvatar));
           }
         } catch (error) {
           if (progress) progress.textContent = String(error);
@@ -1746,7 +1800,8 @@ function renderAvatarList() {
         try {
           await invoke("delete_avatar", { id: avatar.id });
           portraitCache.delete(avatar.id);
-          idleVideoCache.delete(avatar.id);
+          sceneVideoCache.delete(`${avatar.id}:greet`);
+          sceneVideoCache.delete(`${avatar.id}:wait`);
           if (avatar.id === activeAvatar) {
             const builtin = avatars.find((item) => item.isBuiltin);
             activeAvatar = "jarvis";
@@ -2186,7 +2241,7 @@ async function startLiveCall() {
       // line is being opened, so the wait reads as "connecting", not "broken".
       const dialing = stage === "preparing" || stage === "connecting" || stage === "waiting";
       shell.classList.toggle("is-dialing", dialing);
-      updateIdleVisibility();
+      updateScenePlayback();
       if (stage === "live") {
         setMode("listening");
         if (pendingLiveGreeting) {
@@ -2215,7 +2270,7 @@ async function startLiveCall() {
       canvas.hidden = false;
       characterImage.hidden = true;
       shell.classList.add("video-live");
-      updateIdleVisibility();
+      updateScenePlayback();
     },
     onVideoLost: () => {
       // The set came back mid-call: the idle animation is the better picture,
@@ -2223,7 +2278,7 @@ async function startLiveCall() {
       canvas.hidden = true;
       characterImage.hidden = false;
       shell.classList.remove("video-live");
-      updateIdleVisibility();
+      updateScenePlayback();
     },
     onBackdrop: (mode, sample) => {
       // Logged so a bad key on a real machine can be diagnosed after the fact.
@@ -2243,7 +2298,7 @@ async function startLiveCall() {
   try {
     await call.start(activeAvatar, { publishCamera: visionEnabled });
     shell.classList.add("is-live-call");
-    updateIdleVisibility();
+    updateScenePlayback();
   } catch (error) {
     liveCall = null;
     canvas.hidden = true;
@@ -2273,7 +2328,7 @@ async function endLiveCall(reason = "user_end", announce = true) {
   shell.classList.remove("video-live");
   // Back to the idle animation; the local loop picks up where the call left
   // off instead of leaving a frozen portrait on screen.
-  updateIdleVisibility();
+  updateScenePlayback();
   pendingLiveGreeting = "";
   await armWakeListener().catch(() => {});
   if (announce) setMode("ready");
@@ -2666,6 +2721,18 @@ if (currentWindow) {
     // wake without a listener would end the conversation it just started.
     await armWakeListener();
     const backgroundStart = await invoke<boolean>("startup_is_background");
+    // The greeting wave belongs to the first visible screen: a background
+    // launch keeps the window down until the master opens it, and the wave
+    // plays the moment the window actually appears.
+    windowShown = !backgroundStart;
+    if (currentWindow) {
+      void currentWindow.onFocusChanged(({ payload: focused }) => {
+        if (focused && !windowShown) {
+          windowShown = true;
+          updateScenePlayback();
+        }
+      });
+    }
     if (!backgroundStart) void requestMicrophoneAuthorization();
     updateVoiceInfo(await invoke<DirectVoice>("direct_voice_status"));
     await refreshVoicePacks();

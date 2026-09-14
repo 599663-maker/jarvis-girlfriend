@@ -1128,14 +1128,16 @@ test("a character is dialled by click, by name, or by her own wake phrase", () =
   assert.match(frontend, /shell\.classList\.toggle\("is-dialing", dialing\)/);
 });
 
-test("the idle loop is a pre-rendered local video, never patch layers", () => {
-  // The pre-rendered mp4 is fetched from the local avatar store and played
-  // back through the same chroma keyer the live call uses.
-  assert.match(frontend, /invoke<string \| null>\("avatar_idle_video", \{ id: avatar\.id \}\)/);
-  assert.match(frontend, /invoke\("generate_idle_video", \{ id: avatar\.id \}\)/);
-  assert.match(frontend, /new IdlePlayer\(idleCanvas/);
-  assert.match(idleSource, /export class IdlePlayer/);
-  assert.match(idleSource, /setSource\(avatarId: string, source: string \| null\)/);
+test("the scene machine plays greet, wait and static videos, never patch layers", () => {
+  // Scene videos are fetched from the local avatar store and played back
+  // through the same chroma keyer the live call uses.
+  assert.match(frontend, /invoke<string \| null>\(\"avatar_scene_video\", \{/);
+  assert.match(frontend, /invoke\(\"generate_scene_video\", \{ id: avatar\.id, scene: \"greet\" \}\)/);
+  assert.match(frontend, /invoke\(\"generate_scene_video\", \{ id: avatar\.id, scene: \"wait\" \}\)/);
+  assert.match(frontend, /new ScenePlayer\(sceneCanvas/);
+  assert.match(idleSource, /export class ScenePlayer/);
+  assert.match(idleSource, /setScenes\(avatarId: string, scenes: SceneSources\)/);
+  assert.match(idleSource, /playScene\(scene: Scene\)/);
   assert.match(idleSource, /createVideoKeyer\(canvas\)/);
   assert.match(idleSource, /readBackdropClearance\(/);
   assert.match(idleSource, /REVEAL_CLEARANCE = 0\.85/);
@@ -1143,14 +1145,25 @@ test("the idle loop is a pre-rendered local video, never patch layers", () => {
   // backdrop sends the picture back to the still and re-samples.
   assert.match(idleSource, /this\.revealed = true/);
   assert.match(idleSource, /this\.keyer\.setKey\(null\)/);
-  assert.match(styleSheet, /\.idle-character\{position:absolute/);
-  assert.match(styleSheet, /\.shell\.video-live \.idle-character,[\s\S]{0,160}display:none\}/);
-  // Vidu is not involved at playback time: the loop is a data URL from disk.
+  assert.match(styleSheet, /\.scene-video\{position:absolute/);
+  assert.match(styleSheet, /\.shell\.video-live \.scene-video,[\s\S]{0,160}display:none\}/);
+  // Vidu is not involved at playback time: each scene is a data URL from disk.
   assert.match(avatarsRust, /data:video\/mp4/);
-  assert.match(avatarsRust, /pub async fn generate_idle_video/);
-  assert.match(avatarsRust, /pub fn avatar_idle_video/);
+  assert.match(avatarsRust, /pub async fn generate_scene_video/);
+  assert.match(avatarsRust, /pub fn avatar_scene_video/);
   assert.match(avatarsRust, /img2video\(/);
   assert.match(vidu, /pub fn img2video\(/);
+  // Scene 1 greets once on the first visible screen, scene 2 waits while a
+  // question is in the air, scene 3 is the still portrait.
+  assert.match(avatarsRust, /"greet" => \("greet", GREET_PROMPT, 5u64\)/);
+  assert.match(avatarsRust, /"wait" => \("wait", WAIT_PROMPT, 6u64\)/);
+  assert.match(frontend, /function desiredScene\(\): Scene \{/);
+  assert.match(frontend, /if \(QUESTION_MODES\.has\(state\.mode\)\) return sceneSources\.wait/);
+  assert.match(frontend, /if \(!greetPlayed && windowShown\) return sceneSources\.greet/);
+  assert.match(frontend, /startup_is_background/);
+  assert.match(frontend, /onFocusChanged\(\(\{ payload: focused \}\)/);
+  assert.match(idleSource, /video\.loop = scene === \"wait\"/);
+  assert.match(idleSource, /"ended"/);
   // The old patch layers are gone for good: no face canvas, no mouth or eye
   // patches, no geometry probes.
   assert.doesNotMatch(frontend, /face-canvas|faceAnimator|refreshFace|avatar_face/);
@@ -1182,17 +1195,17 @@ test("call orders dial the named character and nothing else", async () => {
   assert.equal(matchCallCommand("打开视频", cast), null, "that is the video switch");
 });
 
-test("the idle player stands down for calls and transformations", () => {
-  // One moving picture at a time: the idle loop pauses and hides while Vidu's
+test("scene videos stand down for calls and transformations", () => {
+  // One moving picture at a time: scene videos pause and hide while Vidu's
   // own picture is on stage, the ringer is dialing, or the particle tornado
   // is swapping characters.
   assert.match(idleSource, /"video-live"/);
   assert.match(idleSource, /"is-dialing"/);
   assert.match(idleSource, /"is-transforming"/);
   assert.match(idleSource, /"is-reforming"/);
-  assert.match(frontend, /function updateIdleVisibility\(\)/);
+  assert.match(frontend, /function updateScenePlayback\(\)/);
   assert.match(frontend, /shell\.classList\.contains\("video-live"\)/);
-  assert.match(frontend, /idlePlayer\.setVisible\(wanted\)/);
+  assert.match(frontend, /scenePlayer\.setVisible\(scene !== \"static\"\)/);
   // The still portrait is only a fallback now: it steps aside when a keyed
   // frame takes the stage and comes back if the backdrop refuses to key.
   assert.match(frontend, /onRevealed: \(\) => \{/);

@@ -2616,8 +2616,8 @@ pub fn run() {
             avatars::avatars,
             avatars::avatar_image,
             avatars::create_avatar,
-            avatars::generate_idle_video,
-            avatars::avatar_idle_video,
+            avatars::generate_scene_video,
+            avatars::avatar_scene_video,
             avatars::set_active_avatar,
             avatars::delete_avatar,
             avatars::set_vidu_key,
@@ -2643,6 +2643,41 @@ pub fn run() {
                 Some(vec!["--background"]),
             ))?;
             let _ = app.autolaunch().enable();
+            // The window is built here instead of tauri.conf.json so its
+            // WKWebView can be told to allow muted video playback without a
+            // click: the greeting wave must start the moment the window
+            // opens, and the waiting pose must loop while Jarvis answers.
+            #[cfg(target_os = "macos")]
+            {
+                use objc2::MainThreadMarker;
+                use objc2_web_kit::{WKAudiovisualMediaTypes, WKWebViewConfiguration};
+                use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+                let mtm = MainThreadMarker::new().expect("setup runs on the main thread");
+                unsafe {
+                    let configuration = WKWebViewConfiguration::new(mtm);
+                    // Keep audio behind a user gesture, but let the muted
+                    // local scene videos play on their own.
+                    configuration.setMediaTypesRequiringUserActionForPlayback(
+                        WKAudiovisualMediaTypes::Audio,
+                    );
+                    WebviewWindowBuilder::new(
+                        app.handle(),
+                        "main",
+                        WebviewUrl::App("index.html".into()),
+                    )
+                    .title("JARVIS · GIRLFRIEND")
+                    .inner_size(1440.0, 900.0)
+                    .min_inner_size(960.0, 620.0)
+                    .center()
+                    .decorations(false)
+                    .transparent(true)
+                    .shadow(false)
+                    .resizable(true)
+                    .with_webview_configuration(configuration)
+                    .build()?;
+                }
+            }
             if let Some(window) = app.get_webview_window("main") {
                 if background_start {
                     let _ = window.hide();
@@ -2666,6 +2701,12 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Jarvis Codex")
         .run(|app, event| {
+            // A background instance keeps its window down until the master
+            // opens Jarvis from the dock or Finder: that reopen event is the
+            // first screen, so the greeting wave has to start here.
+            if matches!(event, tauri::RunEvent::Reopen { .. }) {
+                raise_jarvis_window(app);
+            }
             if matches!(event, tauri::RunEvent::Exit) {
                 // Any clean exit — menu quit, window close, voice command —
                 // means Jarvis is meant to be gone, so the keeper stays out of

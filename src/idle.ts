@@ -1,70 +1,93 @@
-// Pre-rendered idle animation playback.
+// Pre-rendered scene playback.
 //
-// The idle loop is a local mp4 generated once by Vidu from the character's
-// green-screen portrait. It replaces the still image entirely: the video
-// element itself is never shown, every frame is drawn through the WebGL
-// chroma keyer onto the character canvas, so the HUD shows only the moving
-// character — no rectangles, no patch layers, no extra mouths or eyes.
+// Each scene is a local mp4 generated once by Vidu from the character's
+// green-screen portrait:
 //
-// Vidu is not involved at playback time. The file sits on disk; only dialing
-// a realtime call connects to Vidu again.
+//   "greet"  — the friendly wave shown once when the window opens;
+//   "wait"   — hands folded in front, small steps in place, played while the
+//              master asks questions and Jarvis answers;
+//   "static" — no video at all, the still portrait keeps the stage.
+//
+// The video element itself is never shown: every frame is drawn through the
+// WebGL chroma keyer onto the character canvas, so the HUD shows only the
+// moving character — no rectangles, no patch layers, no extra mouths or eyes.
+// Vidu is not involved at playback time; only dialing a realtime call
+// connects to Vidu again.
 
 import { invoke } from "@tauri-apps/api/core";
 import {
   createVideoKeyer,
   readBackdropClearance,
+  type KeyColor,
   type VideoKeyer,
 } from "./chroma";
 
-type Visibility = "shown" | "hidden";
+export type Scene = "greet" | "wait" | "static";
+
+export type SceneHandlers = {
+  /** Fired when a keyed frame takes the stage; the still can step aside. */
+  onRevealed?(): void;
+  /** Fired when the picture has to go back to the still. */
+  onHidden?(): void;
+  /** Fired when the greeting wave has played through once. */
+  onGreetFinished?(): void;
+};
+
+export type SceneSources = { greet: string | null; wait: string | null };
 
 const REVEAL_CLEARANCE = 0.85;
 const REVEAL_CHECK_MS = 400;
 const KEY_RETRY_MS = 900;
 
 function trace(message: string) {
-  void invoke("web_log", { message: `静息动画：${message}` }).catch(() => {});
+  void invoke("web_log", { message: `场景动画：${message}` }).catch(() => {});
 }
 
-function shellLive(): boolean {
+function shellBusy(): boolean {
+  const shell = document.querySelector(".shell");
+  if (!shell) return false;
   return (
-    document.querySelector(".shell")?.classList.contains("video-live") === true ||
-    document.querySelector(".shell")?.classList.contains("is-dialing") === true ||
-    document.querySelector(".shell")?.classList.contains("is-transforming") === true ||
-    document.querySelector(".shell")?.classList.contains("is-reforming") === true
+    shell.classList.contains("video-live") ||
+    shell.classList.contains("is-dialing") ||
+    shell.classList.contains("is-transforming") ||
+    shell.classList.contains("is-reforming")
+  );
+}
+
+/** Whether two green samples describe the same studio backdrop. */
+function keyColorClose(a: KeyColor, b: KeyColor): boolean {
+  return (
+    Math.abs(a.r - b.r) < 20 &&
+    Math.abs(a.g - b.g) < 20 &&
+    Math.abs(a.b - b.b) < 20
   );
 }
 
 /**
- * Plays the idle animation for the active character. The canvas only ever
- * shows a frame whose backdrop is actually keyed out; while detection is
- * pending — or after the backdrop drifted — the still portrait keeps the
- * stage, exactly like the live-call reveal.
+ * Plays scene animations for the active character. The canvas only ever shows
+ * a frame whose backdrop is actually keyed out; while detection is pending —
+ * or after the backdrop drifted — the still portrait keeps the stage, exactly
+ * like the live-call reveal.
  */
-export type IdleHandlers = {
-  /** Fired when a keyed frame takes the stage; the still can step aside. */
-  onRevealed?(): void;
-  /** Fired when the picture has to go back to the still. */
-  onHidden?(): void;
-};
-
-export class IdlePlayer {
+export class ScenePlayer {
   private readonly canvas: HTMLCanvasElement;
   private readonly video: HTMLVideoElement;
   private readonly keyer: VideoKeyer | null;
   private readonly probe: HTMLCanvasElement;
-  private readonly handlers: IdleHandlers;
+  private readonly handlers: SceneHandlers;
   private avatarId = "";
-  private source = "";
-  private wanted: Visibility = "hidden";
+  private scenes: SceneSources = { greet: null, wait: null };
+  private activeScene: Scene = "static";
+  private visible = false;
   private revealed = false;
   private keyAttempts = 0;
   private keyStale = false;
+  private driftStrikes = 0;
   private frameHandle = 0;
   private detectTimer = 0;
   private lastRevealCheck = 0;
 
-  constructor(canvas: HTMLCanvasElement, handlers: IdleHandlers = {}) {
+  constructor(canvas: HTMLCanvasElement, handlers: SceneHandlers = {}) {
     this.canvas = canvas;
     this.handlers = handlers;
     const video = document.createElement("video");
@@ -80,6 +103,12 @@ export class IdlePlayer {
       trace(`动画读取失败（形象 ${this.avatarId || "无"}）`);
       this.hideCanvas();
     });
+    video.addEventListener("ended", () => {
+      // Only the greeting is played once; the waiting pose loops.
+      if (this.activeScene === "greet") {
+        this.handlers.onGreetFinished?.();
+      }
+    });
     document.body.appendChild(video);
     this.video = video;
     this.keyer = createVideoKeyer(canvas);
@@ -88,52 +117,74 @@ export class IdlePlayer {
     this.probe.height = 90;
   }
 
-  /** Points the player at another character's animation, if it has one. */
-  async setSource(avatarId: string, source: string | null) {
-    if (this.avatarId === avatarId && (this.source === source)) return;
-    this.avatarId = avatarId;
-    this.stopPlayback();
-    if (!source) {
-      this.source = "";
-      this.hideCanvas();
+  /** Points the player at another character's scene set. */
+  async setScenes(avatarId: string, scenes: SceneSources) {
+    if (this.avatarId === avatarId && this.scenes.greet === scenes.greet && this.scenes.wait === scenes.wait) {
       return;
     }
-    this.source = source;
+    this.avatarId = avatarId;
+    this.scenes = scenes;
+    this.stopPlayback();
+    this.activeScene = "static";
+    this.applyVisibility();
+  }
+
+  /**
+   * Switches the stage to a scene. "static" parks the video; "greet" plays the
+   * wave once; "wait" loops the waiting pose while a question is in the air.
+   */
+  playScene(scene: Scene) {
+    if (scene === this.activeScene) {
+      if (scene !== "static" && this.video.paused && this.visible) {
+        void this.video.play().catch(() => {});
+      }
+      return;
+    }
+    this.activeScene = scene;
+    this.stopPlayback();
+    if (scene === "static") {
+      this.applyVisibility();
+      return;
+    }
+    const source = this.scenes[scene];
+    if (!source) {
+      this.applyVisibility();
+      return;
+    }
     this.revealed = false;
     this.keyAttempts = 0;
     this.keyStale = false;
+    this.driftStrikes = 0;
+    this.video.loop = scene === "wait";
     this.video.src = source;
     this.video.load();
-    try {
-      await this.video.play();
-    } catch {
-      trace(`自动播放被拦下（形象 ${avatarId}），等待下一次交互`);
-    }
+    if (this.visible) void this.video.play().catch(() => {});
     this.applyVisibility();
     this.startRenderLoop();
   }
 
   /**
-   * Whether the animation may own the stage. It stands down for a realtime
-   * call, the ringer and both halves of the transformation, where the still
-   * portrait or Vidu's own frames are the picture on purpose.
+   * Whether an animation may own the stage at all. It stands down for a
+   * realtime call, the ringer and both halves of the transformation, where
+   * the still portrait or Vidu's own frames are the picture on purpose.
    */
   setVisible(visible: boolean) {
-    const next: Visibility = visible && !shellLive() ? "shown" : "hidden";
-    if (next === this.wanted) {
-      if (this.source && this.video.paused && next === "shown") {
+    const next = visible && !shellBusy();
+    if (next === this.visible) {
+      if (this.activeScene !== "static" && this.video.paused && next) {
         void this.video.play().catch(() => {});
       }
       return;
     }
-    this.wanted = next;
+    this.visible = next;
     this.applyVisibility();
   }
 
   stop() {
-    this.stopPlayback();
     this.avatarId = "";
-    this.source = "";
+    this.scenes = { greet: null, wait: null };
+    this.stopPlayback();
+    this.activeScene = "static";
     this.hideCanvas();
   }
 
@@ -146,10 +197,11 @@ export class IdlePlayer {
     this.video.removeAttribute("src");
     this.video.load();
     this.keyer?.setKey(null);
+    this.revealed = false;
   }
 
   private applyVisibility() {
-    const shown = this.wanted === "shown" && this.revealed;
+    const shown = this.visible && this.revealed && this.activeScene !== "static";
     this.canvas.hidden = !shown;
     if (shown) this.handlers.onRevealed?.();
     else this.handlers.onHidden?.();
@@ -170,7 +222,7 @@ export class IdlePlayer {
     window.clearInterval(this.detectTimer);
     this.detectTimer = window.setInterval(() => this.detectBackdrop(), KEY_RETRY_MS);
     const draw = () => {
-      if (!this.source) return;
+      if (!this.video.src || this.activeScene === "static") return;
       if (this.keyer && this.video.videoWidth) {
         this.keyer.render(this.video);
         this.checkBackdrop(performance.now());
@@ -182,7 +234,7 @@ export class IdlePlayer {
     };
     if (typeof anyVideo.requestVideoFrameCallback === "function") {
       const tick = () => {
-        if (!this.source) return;
+        if (!this.video.src || this.activeScene === "static") return;
         if (this.keyer && this.video.videoWidth) {
           this.keyer.render(this.video);
           this.checkBackdrop(performance.now());
@@ -196,7 +248,7 @@ export class IdlePlayer {
   }
 
   private detectBackdrop() {
-    if (!this.source || !this.keyer || !this.video.videoWidth) return;
+    if (this.activeScene === "static" || !this.keyer || !this.video.videoWidth) return;
     // A healthy key stays; re-sampling a good frame makes the cut flicker.
     if (this.revealed && this.keyer.key() && !this.keyStale) return;
     this.keyAttempts += 1;
@@ -243,9 +295,23 @@ export class IdlePlayer {
       }
       return;
     }
+    if (clearance >= REVEAL_CLEARANCE) {
+      this.driftStrikes = 0;
+      return;
+    }
     if (clearance < REVEAL_CLEARANCE) {
-      // The backdrop drifted or switched: blank the frame, show the still and
-      // re-sample so the animation can come back without a regeneration.
+      this.driftStrikes += 1;
+      // Low edge coverage alone is not drift: a waving hand can cross the
+      // sampled border while the backdrop itself stays exactly the same.
+      // Only a backdrop that actually changed colour — or a blank frame that
+      // persists for two checks — stands the animation down.
+      const sample = this.keyer.detect(this.video);
+      if (sample && keyColorClose(sample.color, key)) {
+        this.driftStrikes = 0;
+        return;
+      }
+      if (this.driftStrikes < 2) return;
+      this.driftStrikes = 0;
       this.revealed = false;
       this.keyer.setKey(null);
       this.keyStale = true;
