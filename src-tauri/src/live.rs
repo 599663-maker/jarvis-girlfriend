@@ -184,9 +184,13 @@ fn create_body(avatar: &Avatar, asset_id: &str, image_uri: Option<String>) -> Va
         "avatar": avatar_payload,
         "audio": {"enable_transcription": true},
         "vad": {
-            "type": "semantic",
-            "threshold": 0.5,
-            "silence_duration_ms": 400,
+            // semantic means "the user opens their mouth and the current line
+            // is interrupted", and the digital human's own voice bleeds into
+            // the published microphone: she used to interrupt herself every
+            // sentence. server filters echoes and background noise instead.
+            "type": "server",
+            "threshold": 0.7,
+            "silence_duration_ms": 800,
             "idle_timeout_ms": 0
         },
         "llm": {

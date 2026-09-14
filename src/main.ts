@@ -951,6 +951,7 @@ async function handle(message: Message) {
     speakCanceled = false;
     state.agentWorking = true;
     setMode("working"); setWorker("orchestrator", "Codex working");
+    updateScenePlayback();
   } else if (method === "item/agentMessage/delta") {
     const delta = typeof params?.delta === "string" ? params.delta : "";
     agentMessageBuffer += delta;
@@ -963,6 +964,7 @@ async function handle(message: Message) {
     void invoke("speak_turn_end");
     if (!state.manualStop) triggerCharacterAction("complete", 1400);
     setMode(state.manualStop ? "stopped" : state.directVoice?.voiceActive ? "listening" : "ready");
+    updateScenePlayback();
     setWorker("orchestrator", state.manualStop ? "Interrupted" : "Ready", !state.manualStop);
     for (const role of ["developer", "researcher", "reviewer"]) {
       setWorker(role, state.manualStop ? "Interrupted" : "Standby", false);
@@ -1001,18 +1003,26 @@ function flushAgentSpeech(final: boolean) {
   if (!speakReplies || state.manualStop || speakCanceled) return;
   const pending = agentMessageBuffer.slice(spokenLength);
   if (!pending) return;
+  // A connected digital human is the only mouth in the room: the agent's own
+  // synthesiser stays silent, so the answer cannot double up with Vidu.
+  if (liveCall?.active) {
+    // Vidu has no per-message ack and a new text_msg takes over the line, so
+    // streaming sentence by sentence makes her cut herself off mid-word. The
+    // whole answer is buffered and read out once, when the turn completes.
+    if (!final) return;
+    const spoken = plainForSpeech(pending);
+    if (spoken) {
+      spokenLength += pending.length;
+      liveCall.say(spoken);
+    }
+    return;
+  }
   const length = final ? pending.length : lastSentenceBoundary(pending);
   if (length <= 0) return;
   const spoken = plainForSpeech(pending.slice(0, length));
   spokenLength += length;
   if (!spoken || (spoken.length < 4 && !final)) return;
-  // A connected digital human is the only mouth in the room: the agent's own
-  // synthesiser stays silent, so the answer cannot double up with Vidu.
-  if (liveCall?.active) {
-    liveCall.say(spoken);
-  } else {
-    speakLine(spoken);
-  }
+  speakLine(spoken);
 }
 
 async function waitForIceGathering(connection: RTCPeerConnection) {
@@ -1227,16 +1237,19 @@ if (currentWindow) {
         if (state.mode === "voice-starting") setMode("listening");
       }, FORMATION_DURATION);
       setWorker("orchestrator", "Text mode · DeepSeek");
-      // The wake phrase carries the name ("嗨张元英"): she takes the line in
-      // person, with the dialling animation, instead of the helmet answering.
-      const dialTarget = await wakeDialTarget(payload);
-      if (dialTarget && (await dialCharacter(dialTarget, true))) return;
-      if (dialTarget) {
-        const name = avatars.find((avatar) => avatar.id === dialTarget)?.name ?? "她";
-        response.textContent = `${response.textContent ?? ""} 先按普通对话继续，说「呼叫${name}」可以再拨一次。`;
-      } else {
-        response.textContent = "我在，请说指令…（也可以直接打字）";
+      // The wake phrase may carry the name ("嗨张元英"): she takes the line
+      // in person through her own local scenes. Waking is never a dial —
+      // only an explicit "呼叫/拨通" order opens the realtime Vidu call.
+      const named = (payload.avatar ?? "").trim();
+      if (named) {
+        await refreshAvatars().catch(() => {});
+        const target = avatars.find((avatar) => avatar.id === named);
+        if (target) {
+          if (target.id !== activeAvatar) await applyAvatar(target.id, true, false);
+          response.textContent = `${target.name}在呢，请说指令…（也可以直接打字）`;
+        }
       }
+      if (!response.textContent) response.textContent = "我在，请说指令…（也可以直接打字）";
       ($("#command-input") as HTMLInputElement).focus();
       return;
     }
@@ -1284,6 +1297,9 @@ if (currentWindow) {
     if (progress && payload?.message) progress.textContent = payload.message;
   });
   await listen("jarvis-barge", () => {
+    // The wake listener is disarmed while a Vidu call owns the microphone:
+    // its echo of the digital human must never be mistaken for a barge-in.
+    if (liveCall?.active) return;
     // Talking over Jarvis drops the answer and hands the turn back to the user.
     speakCanceled = true;
     transcript.textContent = "（打断）";
@@ -1384,6 +1400,7 @@ async function runCommand(text: string, clearInput = true) {
     $("#workspace").textContent = state.session.cwd;
   }
   setMode("working");
+  updateScenePlayback();
   await invoke("send_text", { text });
 }
 
@@ -2132,19 +2149,6 @@ async function deliverLiveUserText(text: string) {
   // the master's face and voice, and Codex stays the brain behind it. The
   // answer comes back through speakLine(), so it is read out with matching lips.
   void runCommand(text, false);
-}
-
-/**
- * Which character the wake phrase named, if it named one. The listener reads
- * the names straight out of the character store, so a wake can arrive before
- * this window has ever listed them.
- */
-async function wakeDialTarget(payload: WakeEvent): Promise<string | null> {
-  const named = (payload.avatar ?? "").trim();
-  if (!named || !currentWindow) return null;
-  await refreshAvatars().catch(() => {});
-  const target = avatars.find((avatar) => avatar.id === named);
-  return target && canDial(target) ? target.id : null;
 }
 
 /** Characters with artwork of their own are the ones Vidu can render. */

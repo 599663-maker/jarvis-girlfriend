@@ -903,7 +903,7 @@ test("the digital human is driven through the session secret, never the account 
   assert.doesNotMatch(liveSource, /vda_/);
   assert.match(liveRust, /client_secret/);
   assert.match(liveRust, /"audio": \{"enable_transcription": true\}/);
-  assert.match(liveRust, /"type": "semantic"/);
+  assert.match(liveRust, /"type": "server"/);
   assert.match(liveRust, /idle_timeout_seconds/);
 });
 
@@ -1121,8 +1121,9 @@ test("a character is dialled by click, by name, or by her own wake phrase", () =
   assert.match(frontend, /const called = matchCallCommand\(text, avatars\)/);
   assert.match(frontend, /async function dialCharacter\(id: string, greet = false\)/);
   assert.match(frontend, /rig\.addEventListener\("click"/);
-  assert.match(frontend, /async function wakeDialTarget\(payload: WakeEvent\)/);
-  assert.match(frontend, /const dialTarget = await wakeDialTarget\(payload\)/);
+  assert.match(frontend, /Waking is never a dial/);
+  assert.match(frontend, /if \(target\.id !== activeAvatar\) await applyAvatar\(target\.id, true, false\)/);
+  assert.ok(!/wakeDialTarget/.test(frontend));
   // Dialling has its own look while the line is opened.
   assert.match(styleSheet, /\.shell\.is-dialing \.character-rig:after\{/);
   assert.match(frontend, /shell\.classList\.toggle\("is-dialing", dialing\)/);

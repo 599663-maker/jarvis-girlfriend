@@ -78,6 +78,7 @@ export class ScenePlayer {
   private avatarId = "";
   private scenes: SceneSources = { greet: null, wait: null };
   private activeScene: Scene = "static";
+  private greetWatchdog = 0;
   private visible = false;
   private revealed = false;
   private keyAttempts = 0;
@@ -161,6 +162,16 @@ export class ScenePlayer {
     if (this.visible) void this.video.play().catch(() => {});
     this.applyVisibility();
     this.startRenderLoop();
+    if (scene === "greet") {
+      // The wave must hand the stage back even when the browser never fires
+      // the ended event (a hidden or throttled video can skip it entirely).
+      const seconds = this.video.duration;
+      const grace = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 + 3000 : 9000;
+      window.clearTimeout(this.greetWatchdog);
+      this.greetWatchdog = window.setTimeout(() => {
+        if (this.activeScene === "greet") this.handlers.onGreetFinished?.();
+      }, grace);
+    }
   }
 
   /**
@@ -189,6 +200,8 @@ export class ScenePlayer {
   }
 
   private stopPlayback() {
+    window.clearTimeout(this.greetWatchdog);
+    this.greetWatchdog = 0;
     window.clearInterval(this.detectTimer);
     this.detectTimer = 0;
     cancelAnimationFrame(this.frameHandle);
@@ -205,10 +218,15 @@ export class ScenePlayer {
     this.canvas.hidden = !shown;
     if (shown) this.handlers.onRevealed?.();
     else this.handlers.onHidden?.();
-    if (shown && this.video.paused) {
+    // The backdrop detection needs live frames, so the video keeps decoding
+    // while a reveal is pending; only a scene that must not own the stage at
+    // all pauses it. A paused video would never reveal, because there would
+    // be no new frame to measure the green edge on.
+    const wanted = this.visible && this.activeScene !== "static";
+    if (wanted && this.video.paused) {
       void this.video.play().catch(() => {});
     }
-    if (!shown && !this.video.paused) {
+    if (!wanted && !this.video.paused) {
       this.video.pause();
     }
   }
