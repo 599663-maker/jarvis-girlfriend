@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1B1440"/>
+      <stop offset="0.6" stop-color="#101226"/>
+      <stop offset="1" stop-color="#080A16"/>
+    </linearGradient>
+    <linearGradient id="heart" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FF86C0"/>
+      <stop offset="0.5" stop-color="#F04FA0"/>
+      <stop offset="1" stop-color="#8F3DFF"/>
+    </linearGradient>
+    <linearGradient id="trace" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#39E2FF"/>
+      <stop offset="1" stop-color="#7AC8FF"/>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="18" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="44" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <radialGradient id="halo" cx="0.5" cy="0.46" r="0.62">
+      <stop offset="0" stop-color="#F04FA0" stop-opacity="0.30"/>
+      <stop offset="0.7" stop-color="#8F3DFF" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#8F3DFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect x="72" y="72" width="880" height="880" rx="200" fill="url(#bg)"/>
+  <rect x="72" y="72" width="880" height="880" rx="200" fill="url(#halo)"/>
+
+  <circle cx="512" cy="486" r="232" fill="#F04FA0" opacity="0.16" filter="url(#softGlow)"/>
+
+  <g stroke="url(#trace)" stroke-width="10" stroke-linecap="round" fill="none">
+    <path d="M140 540 H304 l52 -52 v-48"/>
+    <path d="M884 540 H720 l-52 -52 v-48"/>
+    <path d="M140 540 H304 l52 52 v48"/>
+    <path d="M884 540 H720 l-52 52 v48"/>
+  </g>
+  <g fill="#39E2FF">
+    <circle cx="140" cy="540" r="15"/>
+    <circle cx="884" cy="540" r="15"/>
+    <circle cx="372" cy="412" r="10"/>
+    <circle cx="652" cy="412" r="10"/>
+    <circle cx="372" cy="664" r="10"/>
+    <circle cx="652" cy="664" r="10"/>
+  </g>
+
+  <g filter="url(#glow)">
+    <path d="M256 464 C256 464 96 320 96 208 C96 128 160 64 224 64 C256 64 256 96 256 96 C256 96 256 64 288 64 C352 64 416 128 416 208 C416 320 256 464 256 464 Z"
+          transform="translate(512,352) scale(1.16) translate(-256,-64)"
+          fill="url(#heart)" stroke="#FFD1E8" stroke-opacity="0.55" stroke-width="6"/>
+    <path d="M256 464 C256 464 150 350 150 262 C150 210 184 176 224 176 C250 176 256 196 256 196 C256 196 262 176 288 176 C328 176 362 210 362 262 C362 350 256 464 256 464 Z"
+          transform="translate(512,352) scale(1.16) translate(-256,-64)"
+          fill="#FFD9EC" opacity="0.22"/>
+  </g>
+
+  <g stroke="#FFFFFF" stroke-opacity="0.92" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" fill="none" filter="url(#glow)">
+    <path d="M328 570 h104 l26 -46 l30 100 l26 -54 h182"/>
+  </g>
+  <circle cx="328" cy="570" r="10" fill="#FFFFFF"/>
+  <circle cx="696" cy="570" r="10" fill="#FFFFFF"/>
+</svg>

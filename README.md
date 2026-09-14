@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="src-tauri/icons/icon.png" width="160" alt="Jarvis Codex icon">
+  <img src="assets/logo.png" width="240" alt="Jarvis Girlfriend logo">
 </p>
 
-<h1 align="center">Jarvis × Codex</h1>
+<h1 align="center">Jarvis Girlfriend</h1>
 
 <p align="center">
-  Wake Codex from your desktop with “Hey Jarvis.”
+  Wake your Codex-powered girlfriend from your desktop with “Hey Jarvis.”
 </p>
 
 <p align="center">
@@ -13,20 +13,26 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Big-Guan/jarvis-codex/releases/latest">Download the latest DMG</a>
+  <a href="https://github.com/599663-maker/jarvis-girlfriend/releases/latest">Download the latest DMG</a>
+  ·
+  <a href="INTRO.md">Introduction</a>
   ·
   <a href="CONTRIBUTING.md">Contribute</a>
 </p>
 
 <p align="center">
-  <img src="public/assets/jarvis-character-v2.png" width="520" alt="Jarvis Codex transparent avatar">
+  <img src="public/assets/jarvis-character-v2.png" width="520" alt="Jarvis Girlfriend transparent avatar">
 </p>
 
-Jarvis × Codex is a local voice workspace for macOS. Say the wake phrase and a
-transparent Jarvis window rises from the desktop, then connects to the same
-Codex thread through the Codex app-server WebRTC interface. You can speak
-naturally, interrupt a response, continue the conversation, and ask Codex to
-perform real work in the selected project.
+Jarvis Girlfriend is a local voice companion for macOS, based on the
+[Jarvis × Codex](https://github.com/Big-Guan/jarvis-codex) project. Say the
+wake phrase and a transparent Jarvis window rises from the desktop, then
+connects to the same Codex thread through the Codex app-server WebRTC
+interface. You can speak naturally, interrupt a response, continue the
+conversation, and ask Codex to perform real work in the selected project.
+
+Read [INTRO.md](INTRO.md) for a dedicated introduction to Jarvis Girlfriend:
+its personality, the logo, features, and how it relates to Jarvis × Codex.
 
 > Current status: wake, live transcription, voice responses, and Codex task
 > execution have been verified on Apple Silicon running macOS 26. Realtime
@@ -41,6 +47,7 @@ perform real work in the selected project.
 - Keeps voice, text, tool activity, and task execution in the same Codex thread
 - Stores one persistent thread per canonical workspace path
 - Supports natural turn-taking, interruption, follow-up questions, and STOP
+- Shows an optional realtime digital human (Vidu S1) that speaks along with Codex
 - Offers safe, automatic workspace, and full-access permission profiles
 - Runs in the background at login and raises the window on warm or cold wake
 - Falls back to text input when Voice is temporarily unavailable
@@ -93,7 +100,7 @@ trust boundaries.
 ## Quick start
 
 1. Install and sign in to Codex App, ChatGPT App, or Codex CLI on your Mac.
-2. Download the latest DMG and drag `Jarvis Codex` into Applications.
+2. Download the latest DMG and drag `Jarvis Girlfriend` into Applications.
 3. Allow microphone and speech-recognition access on first launch.
 4. Open Settings and select the project directory Codex should work in.
 5. Close the window to leave Jarvis listening in the background.
@@ -168,8 +175,8 @@ npm run build
 
 Expected outputs:
 
-- `src-tauri/target/release/bundle/macos/Jarvis Codex.app`
-- `src-tauri/target/release/bundle/dmg/Jarvis Codex_0.2.0_aarch64.dmg`
+- `src-tauri/target/release/bundle/macos/Jarvis Girlfriend.app`
+- `src-tauri/target/release/bundle/dmg/Jarvis Girlfriend_0.2.0_aarch64.dmg`
 
 The build script creates and signs `JarvisWakeListener.app`. The generated app
 bundle is not committed to Git.
@@ -198,7 +205,9 @@ public issue.
 
 ## License
 
-Jarvis × Codex is released under the [GNU General Public License v3.0](LICENSE).
+Jarvis Girlfriend is released under the [GNU General Public License v3.0](LICENSE).
+It is based on [Jarvis × Codex](https://github.com/Big-Guan/jarvis-codex) by
+Big-Guan, and keeps the original GPL-3.0 license and attribution.
 
 ## Contributing
 

@@ -15,7 +15,7 @@
 # Create ~/.jarvis-codex/disabled to switch the keeper off completely.
 set -u
 
-app="${JARVIS_APP:-/Applications/Jarvis Codex.app}"
+app="${JARVIS_APP:-/Applications/Jarvis Girlfriend.app}"
 home="${HOME:-/Users/$(/usr/bin/id -un)}"
 state_dir="$home/.jarvis-codex"
 listener="$app/Contents/Resources/wake-helper/JarvisWakeListener.app"

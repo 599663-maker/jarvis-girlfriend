@@ -19,20 +19,20 @@ Do not use a public issue for security vulnerabilities. Follow
 The `main` branch is protected. Direct pushes are not allowed, including for
 maintainers. Every change must be reviewed and merged through a pull request.
 
-1. Fork `Big-Guan/jarvis-codex` on GitHub.
+1. Fork `599663-maker/jarvis-girlfriend` on GitHub.
 2. Clone your fork.
 3. Add the upstream repository.
 4. Create a focused branch from the latest upstream `main`.
 5. Make and test your change.
 6. Push the branch to your fork.
-7. Open a pull request against `Big-Guan/jarvis-codex:main`.
+7. Open a pull request against `599663-maker/jarvis-girlfriend:main`.
 
 Example:
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/jarvis-codex.git
 cd jarvis-codex
-git remote add upstream https://github.com/Big-Guan/jarvis-codex.git
+git remote add upstream https://github.com/599663-maker/jarvis-girlfriend.git
 git fetch upstream
 git switch -c fix/short-description upstream/main
 ```

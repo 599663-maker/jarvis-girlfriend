@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="src-tauri/icons/icon.png" width="160" alt="Jarvis Codex 图标">
+  <img src="assets/logo.png" width="240" alt="Jarvis Girlfriend Logo">
 </p>
 
-<h1 align="center">Jarvis × Codex</h1>
+<h1 align="center">Jarvis Girlfriend</h1>
 
 <p align="center">
-  一声“嗨 Jarvis”，让 Codex 从桌面醒来。
+  一声“嗨 Jarvis”，把你的 Codex 女友从桌面唤醒。
 </p>
 
 <p align="center">
@@ -13,19 +13,24 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Big-Guan/jarvis-codex/releases/latest">下载最新版 DMG</a>
+  <a href="https://github.com/599663-maker/jarvis-girlfriend/releases/latest">下载最新版 DMG</a>
+  ·
+  <a href="INTRO.md">项目介绍</a>
   ·
   <a href="CONTRIBUTING.md">参与贡献</a>
 </p>
 
 <p align="center">
-  <img src="public/assets/jarvis-character-v2.png" width="520" alt="Jarvis Codex 透明角色界面">
+  <img src="public/assets/jarvis-character-v2.png" width="520" alt="Jarvis Girlfriend 透明角色界面">
 </p>
 
-Jarvis × Codex 是一个 macOS 本地语音工作入口。说出唤醒词后，透明窗口从桌面升起，
-粒子与装甲碎片聚合成 Jarvis；随后通过 Codex app-server WebRTC 进入同一个
-Codex 线程。你可以自然对话、打断回复、继续追问，也可以让 Codex 在选定项目中
-真正执行任务。
+Jarvis Girlfriend 是一个 macOS 本地语音伴侣，基于
+[Jarvis × Codex](https://github.com/Big-Guan/jarvis-codex) 项目构建。说出唤醒词后，
+透明窗口从桌面升起，粒子与装甲碎片聚合成 Jarvis；随后通过 Codex app-server
+WebRTC 进入同一个 Codex 线程。你可以自然对话、打断回复、继续追问，也可以让
+Codex 在选定项目中真正执行任务。
+
+想要了解它的设定、Logo 和功能特色，请阅读单独的[项目介绍](INTRO.md)。
 
 > 当前状态：已在 macOS 26 Apple Silicon 实机验证唤醒、实时转写、语音回复和
 > Codex 任务执行。Realtime conversation 仍是实验性的 Codex app-server 能力，
@@ -39,6 +44,7 @@ Codex 线程。你可以自然对话、打断回复、继续追问，也可以�
 - 语音、文字、工具事件和任务执行共用同一个 Codex 线程
 - 按规范化后的工作目录持久化并续接不同线程
 - 支持自然轮流说话、回复中打断、连续追问和 STOP
+- 可选 Vidu S1 实时数字人形象，与 Codex 同步开口说话
 - 提供安全、自动办公和完全访问三档权限
 - 登录时后台启动，冷启动或暖启动唤醒后升起窗口
 - Voice 临时不可用时可以使用文字输入
@@ -86,7 +92,7 @@ Swift 唤醒 helper 与 Voice 会话不会同时采集麦克风。运行时、�
 ## 快速开始
 
 1. 在 Mac 上安装并登录 Codex App、ChatGPT App 或 Codex CLI。
-2. 下载最新 DMG，把 `Jarvis Codex` 拖入“应用程序”。
+2. 下载最新 DMG，把 `Jarvis Girlfriend` 拖入“应用程序”。
 3. 首次启动时允许麦克风和语音识别权限。
 4. 打开设置，选择希望 Codex 工作的项目目录。
 5. 关闭窗口，让 Jarvis 留在后台监听。
@@ -158,8 +164,8 @@ npm run build
 
 预期产物：
 
-- `src-tauri/target/release/bundle/macos/Jarvis Codex.app`
-- `src-tauri/target/release/bundle/dmg/Jarvis Codex_0.2.0_aarch64.dmg`
+- `src-tauri/target/release/bundle/macos/Jarvis Girlfriend.app`
+- `src-tauri/target/release/bundle/dmg/Jarvis Girlfriend_0.2.0_aarch64.dmg`
 
 构建脚本会生成并签名 `JarvisWakeListener.app`，生成的 app bundle 不进入 Git。
 
@@ -184,7 +190,9 @@ Application 证书并完成 notarization，不应把 ad-hoc 构建描述为生�
 
 ## 开源许可证
 
-Jarvis × Codex 使用 [GNU General Public License v3.0](LICENSE) 开源。
+Jarvis Girlfriend 使用 [GNU General Public License v3.0](LICENSE) 开源。
+它基于 Big-Guan 的 [Jarvis × Codex](https://github.com/Big-Guan/jarvis-codex)
+项目，保留原始 GPL-3.0 许可证与署名。
 
 ## 参与贡献
 

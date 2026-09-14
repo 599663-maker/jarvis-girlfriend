@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Jarvis Codex",
+  "productName": "Jarvis Girlfriend",
   "version": "0.2.0",
   "identifier": "com.bigguan.jarvis-codex",
   "build": {
@@ -13,7 +13,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "JARVIS · CODEX",
+        "title": "JARVIS · GIRLFRIEND",
         "width": 1440,
         "height": 900,
         "minWidth": 960,
@@ -43,7 +43,7 @@
       "icons/icon.ico"
     ],
     "category": "DeveloperTool",
-    "shortDescription": "Wake Jarvis and work through Codex",
+    "shortDescription": "Jarvis Girlfriend — your desktop AI companion powered by Codex",
     "resources": [
       "wake-helper/JarvisWakeListener.app/",
       "wake-helper/JarvisVision.app/",
