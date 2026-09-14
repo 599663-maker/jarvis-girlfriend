@@ -52,6 +52,11 @@ pub struct Avatar {
     /// gestures). `null` until the portrait has been looked at.
     #[serde(default)]
     pub body: Value,
+    /// Pre-rendered idle animation video (`{id}-idle.mp4` in the portraits
+    /// directory). Generated once by Vidu and played back locally afterwards,
+    /// so keeping the app open never keeps a Vidu connection open.
+    #[serde(rename = "idleVideoFile", default)]
+    pub idle_video_file: String,
     #[serde(rename = "createdAt", default)]
     pub created_at: u64,
 }
@@ -86,6 +91,7 @@ pub fn builtin_avatar() -> Avatar {
         greeting: crate::WAKE_GREETING.to_owned(),
         face: Value::Null,
         body: Value::Null,
+        idle_video_file: String::new(),
         created_at: 0,
     }
 }
@@ -220,6 +226,9 @@ pub struct AvatarView {
     pub live_voice_label: String,
     #[serde(rename = "hasGreenPortrait")]
     pub has_green_portrait: bool,
+    /// A finished idle animation video is on disk and ready to play.
+    #[serde(rename = "hasIdleVideo")]
+    pub has_idle_video: bool,
     /// Where her face is, so the still artwork can talk between calls.
     pub face: Value,
     /// Hands and feet of the artwork, for the idle pose pass.
@@ -246,6 +255,7 @@ fn view(avatar: &Avatar) -> AvatarView {
         face: avatar.face.clone(),
         body: avatar.body.clone(),
         has_green_portrait: crate::live::green_portrait(avatar).is_some(),
+        has_idle_video: crate::live::idle_video_path(avatar).is_some(),
     }
 }
 
@@ -320,7 +330,9 @@ fn snapshot() -> AvatarSnapshot {
         active_id: store.active_id.clone(),
         limit: MAX_AVATARS,
         avatars: store.avatars.iter().map(view).collect(),
-        vidu: vidu_status(),
+        // Config-only: the HUD lists characters without phoning Vidu. Credits
+        // are fetched on demand, when the settings panel is actually open.
+        vidu: json!({"configured": vidu_key().is_some(), "creditRemain": Value::Null}),
     }
 }
 
@@ -504,6 +516,7 @@ pub async fn create_avatar_from_image(
         greeting: format!("{name}在此，主人请吩咐！"),
         face,
         body: Value::Null,
+        idle_video_file: String::new(),
         created_at: unix_millis(),
     };
     let mut avatars = store.avatars;
@@ -519,65 +532,103 @@ pub async fn create_avatar_from_image(
     Ok(view(&avatar))
 }
 
-/// Where the face of a character's artwork is. Detected once and remembered,
-/// because the HUD needs it on every frame of the talking still.
+/// One-off idle animation render. The first frame is the chroma-green twin of
+/// the portrait, the result is a local mp4 played back by the HUD with the
+/// same keying used for live calls. After this command returns there is no
+/// further Vidu traffic for the idle loop: only dialing a realtime call
+/// touches Vidu again.
 #[tauri::command]
-pub async fn avatar_face(app: AppHandle, id: String) -> Result<Value, String> {
-    let store = load_store();
-    let Some(avatar) = store.avatars.iter().find(|avatar| avatar.id == id) else {
-        return Err(format!("没有找到形象 {id}。"));
+pub async fn generate_idle_video(app: AppHandle, id: String) -> Result<AvatarView, String> {
+    const IDLE_MODEL: &str = "viduq3-pro-fast";
+    const IDLE_DURATION: u64 = 6;
+    const IDLE_RESOLUTION: &str = "720p";
+    const IDLE_PROMPT: &str =
+        "The exact same character as the first frame, keep her face, hairstyle, outfit and \
+         proportions identical. She stands still facing the camera in a natural idle loop: soft \
+         breathing, occasional natural blinking, very subtle weight shifting and small relaxed \
+         hand gestures. Fixed camera, no camera movement, no zoom, no scene change. The entire \
+         background stays one flat solid chroma-key green backdrop with no objects, no shadows \
+         and no colour variation, so the character can be keyed out cleanly. Silent video.";
+
+    let progress = |stage: &str, message: &str| {
+        let _ = app.emit(
+            "avatar-progress",
+            json!({"stage": stage, "message": message, "avatarId": id}),
+        );
     };
-    if !avatar.face.is_null() {
-        return Ok(avatar.face.clone());
-    }
-    let Some(portrait) = crate::live::portrait_path_for(avatar) else {
-        return Ok(Value::Null);
-    };
-    let probe = app.clone();
-    let face = tauri::async_runtime::spawn_blocking(move || {
-        crate::matte::face_geometry(&probe, &portrait)
+
+    let avatar = load_store()
+        .avatars
+        .into_iter()
+        .find(|avatar| avatar.id == id)
+        .ok_or_else(|| format!("没有找到形象 {id}。"))?;
+    let source = crate::live::green_portrait(&avatar)
+        .ok_or_else(|| format!("{} 还没有绿幕形象，无法生成动画。", avatar.name))?;
+    let key = vidu_key().ok_or_else(|| "还没有配置 Vidu API Key，请先在设置里填写。".to_owned())?;
+
+    progress("submitting", "正在把动态形象任务提交给 Vidu…");
+    let portrait_id = id.clone();
+    let task_app = app.clone();
+    let rendered = tauri::async_runtime::spawn_blocking(move || {
+        let bytes = fs::read(&source).map_err(|error| format!("无法读取绿幕形象：{error}"))?;
+        let image_uri = format!("data:image/png;base64,{}", base64_encode(&bytes));
+        let client = ViduClient::new(key);
+        let task_id = client.img2video(
+            &image_uri,
+            IDLE_PROMPT,
+            IDLE_DURATION,
+            IDLE_MODEL,
+            IDLE_RESOLUTION,
+        )?;
+        let _ = task_app.emit(
+            "avatar-progress",
+            json!({"stage": "rendering", "message": "Vidu 正在渲染动态形象，大约需要 1–3 分钟…", "avatarId": portrait_id, "taskId": task_id}),
+        );
+        let urls = client.wait_for_task(&task_id, Duration::from_secs(420))?;
+        let target = portraits_dir()?.join(format!("{portrait_id}-idle.mp4"));
+        client.download(&urls[0], &target)?;
+        let size = fs::metadata(&target).map(|meta| meta.len()).unwrap_or(0);
+        if size < 64 * 1024 {
+            return Err("下载到的动画视频不完整，请稍后重试。".to_owned());
+        }
+        Ok::<_, String>(format!("{portrait_id}-idle.mp4"))
     })
     .await
-    .map_err(|error| format!("人脸识别任务异常：{error}"))?
-    .unwrap_or(Value::Null);
-    if face.is_null() {
-        return Ok(Value::Null);
-    }
+    .map_err(|error| format!("动态形象生成任务异常：{error}"))??;
+
+    progress("saving", "动画已生成，正在保存…");
     let mut store = load_store();
-    if let Some(target) = store.avatars.iter_mut().find(|avatar| avatar.id == id) {
-        target.face = face.clone();
-        let _ = save_store(&store);
-    }
-    Ok(face)
+    let target = store
+        .avatars
+        .iter_mut()
+        .find(|avatar| avatar.id == id)
+        .ok_or_else(|| format!("没有找到形象 {id}。"))?;
+    target.idle_video_file = rendered.clone();
+    let avatar = target.clone();
+    save_store(&store)?;
+    progress("done", "动态形象已就绪，静息时会循环播放");
+    Ok(view(&avatar))
 }
 
-/// Hands and feet of a character's artwork, for the idle pose pass. Detected
-/// lazily on first request and remembered, exactly like the face geometry.
+/// The idle animation is a local file; the webview receives it as a data URL,
+/// exactly like the portrait, so the asset-protocol scope stays narrow.
 #[tauri::command]
-pub async fn avatar_body(app: AppHandle, id: String) -> Result<Value, String> {
+pub fn avatar_idle_video(id: String) -> Result<Option<String>, String> {
     let store = load_store();
     let Some(avatar) = store.avatars.iter().find(|avatar| avatar.id == id) else {
-        return Err(format!("没有找到形象 {id}。"));
+        return Ok(None);
     };
-    if !avatar.body.is_null() {
-        return Ok(avatar.body.clone());
-    }
-    let Some(portrait) = crate::live::portrait_path_for(avatar) else {
-        return Ok(Value::Null);
+    let Some(path) = crate::live::idle_video_path(avatar) else {
+        return Ok(None);
     };
-    let probe = app.clone();
-    let body = tauri::async_runtime::spawn_blocking(move || {
-        crate::matte::body_geometry(&probe, &portrait)
-    })
-    .await
-    .map_err(|error| format!("姿态识别任务异常：{error}"))?
-    .unwrap_or_else(|_| serde_json::json!({ "hands": [], "feet": [] }));
-    let mut store = load_store();
-    if let Some(target) = store.avatars.iter_mut().find(|avatar| avatar.id == id) {
-        target.body = body.clone();
-        let _ = save_store(&store);
-    }
-    Ok(body)
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(_) => return Ok(None),
+    };
+    Ok(Some(format!(
+        "data:video/mp4;base64,{}",
+        base64_encode(&bytes)
+    )))
 }
 
 #[tauri::command]
@@ -681,6 +732,7 @@ pub async fn create_avatar(
         greeting: format!("{name}在此，主人请吩咐！"),
         face: Value::Null,
         body: Value::Null,
+        idle_video_file: String::new(),
         created_at: unix_millis(),
     };
     avatars.push(avatar.clone());
@@ -781,6 +833,7 @@ mod tests {
             live_asset_id: String::new(),
             prompt: String::new(),
             greeting: String::new(),
+            idle_video_file: String::new(),
             created_at: 1,
         };
         assert_eq!(greeting_text_for(&avatar), "小美在此，主人请吩咐！");

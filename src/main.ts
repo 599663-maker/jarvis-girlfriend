@@ -9,7 +9,7 @@ import { matchVisionCommand } from "./vision-command";
 import { matchCallCommand, matchLiveCommand } from "./live-command";
 import { LiveCall, type LiveStage } from "./live";
 import { cutPortraitBackground } from "./chroma";
-import { createFaceAnimator, moodFor, type FaceAnimator, type FaceBox, type FaceGeometry } from "./face";
+import { IdlePlayer } from "./idle";
 
 type Mode = "booting" | "ready" | "voice-starting" | "listening" | "working" | "speaking" | "degraded" | "stopped";
 type Message = { id?: number | string; method?: string; params?: any };
@@ -47,10 +47,8 @@ type AvatarInfo = AvatarName & {
   liveVoice: string;
   liveVoiceLabel: string;
   hasGreenPortrait: boolean;
-  /** Face boxes of the artwork: the still character talks with them. */
-  face?: FaceGeometry | null;
-  /** Hands and feet boxes for the idle pose pass (sway, breath, gestures). */
-  body?: { hands?: FaceBox[]; feet?: FaceBox[] } | null;
+  /** A pre-rendered idle animation video is ready to play locally. */
+  hasIdleVideo: boolean;
 };
 type AvatarSnapshot = {
   activeId: string;
@@ -149,7 +147,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         <div class="assembly-orbits" aria-hidden="true"><i></i><i></i><i></i></div>
         <div class="armor-shards" aria-hidden="true"></div>
         <img id="jarvis-character" class="helmet-character" src="/assets/jarvis-character-v2.png" alt="Jarvis holographic helmet">
-        <canvas id="face-canvas" class="face-canvas" hidden aria-hidden="true"></canvas>
+        <canvas id="idle-character" class="idle-character" hidden aria-hidden="true"></canvas>
         <canvas id="live-character" class="live-character" hidden aria-hidden="true"></canvas>
         <div class="helmet-scan"><i></i></div>
         <div class="assembly-flash" aria-hidden="true"></div>
@@ -268,12 +266,6 @@ function setMode(mode: Mode) {
   state.mode = mode; shell.setAttribute("data-mode", mode);
   $("#mode-label").textContent = copy[mode][0]; $("#identity-state").textContent = copy[mode][1];
   if (mode === "voice-starting" || mode === "booting") playFormation();
-  // The still character follows the conversation: lips while she talks, and a
-  // mood read from whichever sentence is in hand.
-  syncFaceSpeech();
-  faceAnimator?.setMood(
-    moodFor(mode === "speaking" ? response.textContent ?? "" : transcript.textContent ?? ""),
-  );
 }
 function setWorker(role: string, label: string, active = true) {
   const card = document.querySelector<HTMLElement>(`.worker[data-role="${role}"]`);
@@ -824,10 +816,10 @@ function animationBudget(now: number) {
 function animationFrame(now: number) {
   if (!animationRunning) return;
   syncResting(!animationBusy() && now - lastActivityAt >= REST_AFTER_MS);
-  // The patch layer is driven by a handful of classes and hidden flags that a
-  // call can leave behind: re-deriving its visibility here means the still can
-  // never get stuck silent after a hang-up, whatever order things unwound in.
-  updateFaceVisibility();
+  // The idle video is driven by a handful of shell classes: re-deriving its
+  // visibility here means the still can never get stuck after a hang-up,
+  // whatever order things unwound in.
+  updateIdleVisibility();
   if (now - lastAnimationFrame >= animationBudget(now) - .6) {
     lastAnimationFrame = now;
     state.level *= .9;
@@ -1274,9 +1266,15 @@ if (currentWindow) {
     }
   });
   await listen<VisionSignal>("jarvis-vision", ({ payload }) => applyVisionSignal(payload));
-  await listen<{ stage?: string; message?: string }>("avatar-progress", ({ payload }) => {
+  await listen<{ stage?: string; message?: string; avatarId?: string }>("avatar-progress", ({ payload }) => {
     const progress = document.querySelector<HTMLElement>("#avatar-progress");
     if (progress && payload?.message) progress.textContent = payload.message;
+    if (payload?.stage === "done" && payload.avatarId) {
+      // The one-off render finished: drop the cached video and refresh the
+      // list so the "动态形象" state and the on-stage loop catch up.
+      idleVideoCache.delete(payload.avatarId);
+      void refreshAvatars();
+    }
   });
   await listen<{ message?: string }>("avatarlive-progress", ({ payload }) => {
     const progress = document.querySelector<HTMLElement>("#avatar-progress");
@@ -1332,16 +1330,6 @@ async function runCommand(text: string, clearInput = true) {
     if (clearInput) ($("#command-input") as HTMLInputElement).value = "";
     transcript.textContent = text;
     await applyVisionCommand(spokenVision, true);
-    return;
-  }
-  if (/^(面部自检|面部检测|face ?probe)$/i.test(text.trim())) {
-    // Answers "is the patch layer painting anything at all?": the still only
-    // lights the canvas during a blink or a syllable, so it is watched for a
-    // few seconds rather than looked at once.
-    if (clearInput) ($("#command-input") as HTMLInputElement).value = "";
-    transcript.textContent = text;
-    response.textContent = "正在检查面部图层…";
-    watchFaceLayer("手动自检");
     return;
   }
   const called = matchCallCommand(text, avatars);
@@ -1487,7 +1475,7 @@ function decodeImage(image: HTMLImageElement) {
 }
 
 function updateCharacterChrome(avatar: AvatarInfo | undefined) {
-  void refreshFace();
+  void refreshIdle(avatar);
   const name = (avatar?.name ?? "Jarvis").trim() || "Jarvis";
   $("#brand-name").textContent = name.toUpperCase();
   $("#identity-role").textContent = `${name.toUpperCase()} CORE`;
@@ -1495,156 +1483,65 @@ function updateCharacterChrome(avatar: AvatarInfo | undefined) {
 }
 
 // ---------------------------------------------------------------------------
-// The talking still. Between calls the artwork itself moves: lips for every
-// syllable, blinking eyes and a mood taken from the sentence being said.
+// The idle loop. A pre-rendered local video replaces the still portrait: the
+// character breathes, blinks and shifts her weight without any patch layers.
+// Vidu renders it once; playback is entirely local. Only dialing a realtime
+// call connects to Vidu again.
 // ---------------------------------------------------------------------------
 
-const faceCanvas = $("#face-canvas") as HTMLCanvasElement;
-let faceAnimator: FaceAnimator | null = null;
-let faceGeometryFor = "";
-let faceWanted = false;
-let faceAudited = false;
-/// While a call is up the still is what the master watches whenever Vidu's own
-/// picture is not on screen, so her lips have to follow the digital human's
-/// voice as well — not just the local reader.
-let liveMouthLevel = 0;
-let liveMouthTimer: number | undefined;
+const idleVideoCache = new Map<string, string>();
+const idleCanvas = $("#idle-character") as HTMLCanvasElement;
+const idlePlayer = new IdlePlayer(idleCanvas, {
+  onRevealed: () => {
+    // Vidu's live picture owns the stage during a call; only the idle loop
+    // may push the still portrait aside.
+    if (!shell.classList.contains("video-live")) characterImage.hidden = true;
+  },
+  onHidden: () => {
+    if (!shell.classList.contains("video-live")) characterImage.hidden = false;
+  },
+});
+let idleSourceFor = "";
+let idleWanted = false;
 
-/// One voice at a time: the local reader between calls, the digital human's
-/// during one.
-function syncFaceSpeech() {
-  faceAnimator?.setSpeaking(state.mode === "speaking" || liveMouthLevel > 0);
-}
-
-function faceTrace(message: string) {
-  void invoke("web_log", { message: `面部图层：${message}` }).catch(() => {});
-}
-
-/**
- * Reads a scattered sample of the patch layer's pixels. A canvas that is
- * running but painting nothing and a canvas whose loop never started look
- * identical on screen, so the layer reports what it actually put down.
- */
-function faceLayerPixels(): number | null {
-  const context = faceCanvas.getContext("2d");
-  if (!context || !faceCanvas.width || !faceCanvas.height) {
-    faceTrace(`画布没有可绘制的尺寸（${faceCanvas.width}x${faceCanvas.height}）`);
-    return null;
-  }
-  let lit = 0;
-  try {
-    const pixels = context.getImageData(0, 0, faceCanvas.width, faceCanvas.height).data;
-    for (let index = 3; index < pixels.length; index += 4 * 37) {
-      if (pixels[index] > 8) lit += 1;
-    }
-  } catch (error) {
-    faceTrace(`画布读取失败：${String(error)}`);
-    return null;
-  }
-  return lit;
-}
-
-/**
- * Watches the layer for a few seconds. It is blank except during a blink or a
- * syllable, so a single look always reports an empty canvas: only the busiest
- * frame says whether anything is being painted at all.
- */
-function watchFaceLayer(tag = "自检") {
-  if (!faceAnimator) {
-    faceTrace(`${tag}：补丁层没有启动（没有可用的人脸几何）`);
-    return;
-  }
-  const total = Math.ceil((faceCanvas.width * faceCanvas.height) / 37);
-  let best = 0;
-  let samples = 0;
-  const started = performance.now();
-  const timer = window.setInterval(() => {
-    const lit = faceLayerPixels();
-    if (lit !== null) best = Math.max(best, lit);
-    samples += 1;
-    if (performance.now() - started < 5000) return;
-    window.clearInterval(timer);
-    faceTrace(
-      `${tag}：5 秒内最多 ${best}/${total} 个采样点有像素` +
-        `（可见 ${!faceCanvas.hidden} · 说话 ${state.mode === "speaking" || liveMouthLevel > 0}）`,
-    );
-  }, 200);
-}
-
-function stopFace() {
-  faceAnimator?.stop();
-  faceAnimator = null;
-  faceGeometryFor = "";
-  faceCanvas.hidden = true;
-}
-
-function updateFaceVisibility() {
-  // Two owners, one face. The patch layer belongs to the still picture, so it
-  // stands down for whichever moving picture has taken the stage: Vidu's own
-  // frames (`video-live`), a transformation, or the ringer. A call that is up
-  // but has no picture yet — the key colour is still being measured, or the
-  // backdrop refuses to key — is still showing the still, so she keeps talking
-  // with it instead of freezing.
+function updateIdleVisibility() {
   const live =
     shell.classList.contains("video-live") ||
     shell.classList.contains("is-dialing") ||
     shell.classList.contains("is-transforming") ||
     shell.classList.contains("is-reforming");
-  // Only a portrait character has a face to move: the built-in helmet must
-  // never get lip-sync patches painted over it.
   const portrait = shell.classList.contains("custom-character");
-  const wanted = Boolean(faceAnimator) && Boolean(faceGeometryFor) && !live && portrait && !characterImage.hidden;
-  faceCanvas.hidden = !wanted;
-  if (wanted !== faceWanted) {
-    faceWanted = wanted;
-    faceTrace(
-      wanted
-        ? `补丁层开启（形象 ${faceGeometryFor}）`
-        : `补丁层关闭：动画器 ${Boolean(faceAnimator)} · 几何 ${faceGeometryFor || "无"} · 动图 ${live} · 立绘形象 ${portrait} · 立绘可见 ${!characterImage.hidden}`,
-    );
+  const wanted = Boolean(idleSourceFor) && portrait && !live;
+  if (wanted !== idleWanted) {
+    idleWanted = wanted;
+    void invoke("web_log", {
+      message: `静息动画：${wanted ? "接管画面" : `退场：动图 ${live} · 立绘形象 ${portrait}`}`,
+    }).catch(() => {});
   }
-  // Paused rather than merely hidden: a dormant layer costs no CPU at all.
-  faceAnimator?.setActive(wanted);
+  idlePlayer.setVisible(wanted);
 }
 
-/** Looks up where her face is; the artwork is measured once and remembered. */
-async function refreshFace() {
-  const avatar = avatars.find((item) => item.id === activeAvatar);
-  if (!avatar || !avatar.hasImage || !currentWindow) {
-    faceTrace(`没有可用立绘：形象 ${avatar?.id ?? "无"} · 图片 ${Boolean(avatar?.hasImage)} · 窗口 ${Boolean(currentWindow)}`);
-    stopFace();
+/** Loads the active character's idle animation and lets it take the stage. */
+async function refreshIdle(avatar: AvatarInfo | undefined) {
+  if (!avatar || !avatar.hasIdleVideo) {
+    idleSourceFor = "";
+    idlePlayer.stop();
     return;
   }
-  let geometry = avatar.face ?? null;
-  if (!geometry?.face) {
-    geometry = await invoke<FaceGeometry | null>("avatar_face", { id: avatar.id }).catch(() => null);
-    if (geometry?.face) avatar.face = geometry;
+  let source = idleVideoCache.get(avatar.id) ?? null;
+  if (source === null) {
+    const fetched = await invoke<string | null>("avatar_idle_video", { id: avatar.id }).catch(() => null);
+    source = fetched;
+    if (source) idleVideoCache.set(avatar.id, source);
   }
-  if (!geometry?.face) {
-    faceTrace(`${avatar.name} 没有面部几何，补丁层无法启用`);
-    stopFace();
+  if (!source) {
+    idleSourceFor = "";
+    idlePlayer.setVisible(false);
     return;
   }
-  // The idle pose pass needs hands and feet. They are detected once and cached
-  // next to the face, exactly like the face itself.
-  const body = avatar.body ?? await invoke<{ hands?: FaceBox[]; feet?: FaceBox[] } | null>(
-    "avatar_body", { id: avatar.id },
-  ).catch(() => null);
-  if (body) avatar.body = body;
-  const liveGeometry: FaceGeometry = { ...geometry, hands: body?.hands ?? [], feet: body?.feet ?? [] };
-  if (!faceAnimator) faceAnimator = createFaceAnimator(faceCanvas, characterImage, liveGeometry);
-  else faceAnimator.setGeometry(liveGeometry);
-  faceGeometryFor = avatar.id;
-  faceAnimator.setSpeaking(state.mode === "speaking");
-  faceAnimator.setMood(moodFor(response.textContent ?? ""));
-  faceAnimator.start();
-  updateFaceVisibility();
-  // Checked once per launch, so a layer that stops painting is visible in the
-  // log instead of only in the master's eyes.
-  if (!faceAudited) {
-    faceAudited = true;
-    window.setTimeout(() => watchFaceLayer("启动自检"), 1500);
-  }
+  idleSourceFor = avatar.id;
+  await idlePlayer.setSource(avatar.id, source);
+  updateIdleVisibility();
 }
 
 async function portraitFor(avatar: AvatarInfo): Promise<string | null> {
@@ -1672,7 +1569,8 @@ async function applyAvatarArt(avatar: AvatarInfo) {
   characterImage.src = source;
   await decodeImage(characterImage).catch(() => {});
   shell.classList.toggle("custom-character", !avatar.isBuiltin);
-  updateFaceVisibility();
+  await refreshIdle(avatar);
+  updateIdleVisibility();
 }
 
 /// The particle tornado: the current character spins apart into the funnel,
@@ -1693,7 +1591,8 @@ async function playTransform(avatar: AvatarInfo) {
     await decodeImage(characterImage);
     shell.classList.remove("is-transforming");
     shell.classList.toggle("custom-character", !avatar.isBuiltin);
-    updateFaceVisibility();
+    await refreshIdle(avatar);
+    updateIdleVisibility();
     shell.classList.add("is-reforming");
     prepareVisualParticles(true);
     startParticleFormation(true, TRANSFORM_DURATION - TRANSFORM_FUNNEL);
@@ -1803,7 +1702,38 @@ function renderAvatarList() {
         response.textContent = `实时音色切换失败：${String(error)}`;
       }
     });
-    row.append(liveSelect);
+    const actions = document.createElement("span");
+    actions.className = "avatar-actions";
+    actions.append(liveSelect);
+
+    if (!avatar.isBuiltin) {
+      const idle = document.createElement("button");
+      idle.type = "button";
+      idle.className = "avatar-idle";
+      idle.textContent = avatar.hasIdleVideo ? "重做动画" : "生成动画";
+      idle.title = avatar.hasIdleVideo
+        ? "重新渲染一次静息动画（会消耗 Vidu 积分）"
+        : "用 Vidu 渲染一次静息动画，之后本机循环播放，不再连接 Vidu";
+      idle.addEventListener("click", async (event) => {
+        event.preventDefault();
+        idle.disabled = true;
+        idle.textContent = "渲染中…";
+        const progress = document.querySelector<HTMLElement>("#avatar-progress");
+        try {
+          await invoke("generate_idle_video", { id: avatar.id });
+          await refreshAvatars();
+          if (progress) progress.textContent = `${avatar.name} 的动态形象已就绪，静息时自动循环播放。`;
+          if (avatar.id === activeAvatar) {
+            void refreshIdle(avatars.find((item) => item.id === activeAvatar));
+          }
+        } catch (error) {
+          if (progress) progress.textContent = String(error);
+        } finally {
+          idle.disabled = false;
+        }
+      });
+      actions.append(idle);
+    }
 
     if (!avatar.isBuiltin) {
       const remove = document.createElement("button");
@@ -1816,6 +1746,7 @@ function renderAvatarList() {
         try {
           await invoke("delete_avatar", { id: avatar.id });
           portraitCache.delete(avatar.id);
+          idleVideoCache.delete(avatar.id);
           if (avatar.id === activeAvatar) {
             const builtin = avatars.find((item) => item.isBuiltin);
             activeAvatar = "jarvis";
@@ -1831,8 +1762,9 @@ function renderAvatarList() {
           remove.disabled = false;
         }
       });
-      row.append(remove);
+      actions.append(remove);
     }
+    row.append(actions);
     container.append(row);
   }
 }
@@ -1871,19 +1803,21 @@ async function refreshAvatars() {
   renderAvatarList();
   fillVoiceSelect();
   const status = $("#vidu-status");
-  const creditsInfo = snapshot.vidu?.configured
+  // Vidu is only contacted on demand: the list loads from the local store,
+  // credits are fetched once while the settings panel is actually open.
+  const creditsInfo = snapshot.vidu?.configured && settings.open
     ? await invoke<{ affordableSeconds?: number; creditRemain?: number }>("videolive_credits").catch(() => null)
     : null;
   const creditRemain = creditsInfo?.creditRemain ?? snapshot.vidu?.creditRemain ?? null;
   if (!snapshot.vidu?.configured) {
     status.textContent = "Vidu：还没有配置 API Key。在 ~/.jarvis-codex/config.json 里填入 viduKey 就能新建形象。";
   } else if (creditRemain === null || creditRemain === undefined) {
-    status.textContent = `Vidu：已配置，余额查询失败${snapshot.vidu.error ? `（${snapshot.vidu.error}）` : ""}。`;
+    status.textContent = "Vidu：已配置。余额只在拨号或打开本面板时查询。";
   } else {
     const talk = creditsInfo?.affordableSeconds
       ? `，实时对话还能说约 ${Math.round(creditsInfo.affordableSeconds / 60)} 分钟`
       : "";
-    status.textContent = `Vidu：已连接，剩余 ${creditRemain} 积分（生成一个形象约 6 积分）${talk}。实时数字人 3 积分 / 2 秒。`;
+    status.textContent = `Vidu：剩余 ${creditRemain} 积分（生成一个形象约 6 积分）${talk}。实时数字人 3 积分 / 2 秒。`;
   }
   const remaining = Math.max(0, avatarLimit - avatars.length);
   const summary = document.querySelector<HTMLElement>("#avatar-create summary");
@@ -2252,7 +2186,7 @@ async function startLiveCall() {
       // line is being opened, so the wait reads as "connecting", not "broken".
       const dialing = stage === "preparing" || stage === "connecting" || stage === "waiting";
       shell.classList.toggle("is-dialing", dialing);
-      updateFaceVisibility();
+      updateIdleVisibility();
       if (stage === "live") {
         setMode("listening");
         if (pendingLiveGreeting) {
@@ -2269,17 +2203,6 @@ async function startLiveCall() {
     onUserText: (text) => void handleLiveUserText(text),
     onBotText: (text) => {
       response.textContent = text;
-      // Vidu never says when a sentence is over, so the lips are held open for
-      // roughly as long as reading it out takes — Chinese speech runs about
-      // five characters a second — instead of for one fixed beat.
-      liveMouthLevel = 1;
-      window.clearTimeout(liveMouthTimer);
-      liveMouthTimer = window.setTimeout(() => {
-        liveMouthLevel = 0;
-        syncFaceSpeech();
-      }, Math.max(1200, text.length * 220));
-      faceAnimator?.setMood(moodFor(text));
-      syncFaceSpeech();
     },
     onError: (message) => {
       response.textContent = message;
@@ -2292,15 +2215,15 @@ async function startLiveCall() {
       canvas.hidden = false;
       characterImage.hidden = true;
       shell.classList.add("video-live");
-      updateFaceVisibility();
+      updateIdleVisibility();
     },
     onVideoLost: () => {
-      // The set came back mid-call: the still is the better picture, and her
-      // lips keep working on it instead of freezing over a video rectangle.
+      // The set came back mid-call: the idle animation is the better picture,
+      // and it keeps moving instead of freezing over a video rectangle.
       canvas.hidden = true;
       characterImage.hidden = false;
       shell.classList.remove("video-live");
-      updateFaceVisibility();
+      updateIdleVisibility();
     },
     onBackdrop: (mode, sample) => {
       // Logged so a bad key on a real machine can be diagnosed after the fact.
@@ -2320,7 +2243,7 @@ async function startLiveCall() {
   try {
     await call.start(activeAvatar, { publishCamera: visionEnabled });
     shell.classList.add("is-live-call");
-    updateFaceVisibility();
+    updateIdleVisibility();
   } catch (error) {
     liveCall = null;
     canvas.hidden = true;
@@ -2348,14 +2271,10 @@ async function endLiveCall(reason = "user_end", announce = true) {
   shell.classList.remove("is-live-call");
   shell.classList.remove("is-dialing");
   shell.classList.remove("video-live");
-  // Back to the still: re-measure her face so the lips and eyes pick up where
-  // the call left off instead of leaving a frozen portrait on screen.
-  void refreshFace();
-  updateFaceVisibility();
+  // Back to the idle animation; the local loop picks up where the call left
+  // off instead of leaving a frozen portrait on screen.
+  updateIdleVisibility();
   pendingLiveGreeting = "";
-  window.clearTimeout(liveMouthTimer);
-  liveMouthLevel = 0;
-  syncFaceSpeech();
   await armWakeListener().catch(() => {});
   if (announce) setMode("ready");
   // The next call is one click away, so the dialler is what stays on screen.
@@ -2646,6 +2565,7 @@ $("#settings").addEventListener("click", () => {
   syncPermissionControls();
   void refreshVoicePacks();
   settings.showModal();
+  void refreshAvatars();
 });
 $("#close-settings").addEventListener("click", () => settings.close());
 $("#new-thread").addEventListener("click", async () => {

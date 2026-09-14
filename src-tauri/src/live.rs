@@ -115,10 +115,15 @@ fn portrait_path(avatar: &Avatar) -> Option<PathBuf> {
     path.exists().then_some(path)
 }
 
-/// Artwork of a character as a file, for the tools that look at it (face
-/// geometry). The digital human uses `live_image` instead.
-pub fn portrait_path_for(avatar: &Avatar) -> Option<PathBuf> {
-    portrait_path(avatar)
+/// The pre-rendered idle animation, once Vidu has produced and downloaded it.
+/// `None` until the one-off generation has finished, so the UI falls back to
+/// the still portrait in the meantime.
+pub fn idle_video_path(avatar: &Avatar) -> Option<PathBuf> {
+    if avatar.idle_video_file.is_empty() {
+        return None;
+    }
+    let path = avatars::portraits_dir().ok()?.join(&avatar.idle_video_file);
+    path.is_file().then_some(path)
 }
 
 /// Image the digital human is rendered from: the green-screen twin keeps the

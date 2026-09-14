@@ -152,6 +152,38 @@ impl ViduClient {
             .ok_or_else(|| format!("Vidu 未返回 task_id：{value}"))
     }
 
+    /// Submits an image-to-video task and returns its task id.
+    ///
+    /// The result is always a silent video: `audio` is forced to false because
+    /// the q3 family defaults it to true, and an idle loop must not come with
+    /// a voice track. The caller polls with [`ViduClient::wait_for_task`] and
+    /// saves the creation with [`ViduClient::download`].
+    pub fn img2video(
+        &self,
+        image_uri: &str,
+        prompt: &str,
+        duration: u64,
+        model: &str,
+        resolution: &str,
+    ) -> Result<String, String> {
+        let payload = json!({
+            "model": model,
+            "images": [image_uri],
+            "prompt": prompt,
+            "duration": duration,
+            "resolution": resolution,
+            "audio": false,
+            "bgm": false,
+            "watermark": false,
+        });
+        let value = self.json(&format!("{API_BASE}/ent/v2/img2video"), Some(&payload))?;
+        value
+            .get("task_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| format!("Vidu 未返回 task_id：{value}"))
+    }
+
     fn task_state(&self, task_id: &str) -> Result<(String, Vec<String>), String> {
         let value = self.json(
             &format!("{API_BASE}/ent/v2/tasks/{task_id}/creations"),

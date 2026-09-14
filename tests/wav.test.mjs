@@ -860,7 +860,7 @@ const visionSource = await readFile(new URL("../src-tauri/src/vision.rs", import
 const chromaSource = await readFile(new URL("../src/chroma.ts", import.meta.url), "utf8");
 const liveRust = await readFile(new URL("../src-tauri/src/live.rs", import.meta.url), "utf8");
 const liveCommand = await readFile(new URL("../src/live-command.ts", import.meta.url), "utf8");
-const faceSource = await readFile(new URL("../src/face.ts", import.meta.url), "utf8");
+const idleSource = await readFile(new URL("../src/idle.ts", import.meta.url), "utf8");
 const avatarsRust = await readFile(new URL("../src-tauri/src/avatars.rs", import.meta.url), "utf8");
 const matteSwift = await readFile(
   new URL("../src-tauri/wake-helper/jarvis-matte.swift", import.meta.url),
@@ -1128,47 +1128,35 @@ test("a character is dialled by click, by name, or by her own wake phrase", () =
   assert.match(frontend, /shell\.classList\.toggle\("is-dialing", dialing\)/);
 });
 
-test("the still character moves her mouth and eyes while she talks", () => {
-  assert.match(faceSource, /export function syllableEnvelope\(ms: number\): number/);
-  assert.match(faceSource, /export function blinkAt\(ms: number\): number/);
-  assert.match(faceSource, /export function moodFor\(text: string\): Mood/);
-  assert.match(faceSource, /export function createFaceAnimator\(/);
-  assert.match(frontend, /async function refreshFace\(\)/);
-  assert.match(frontend, /invoke<FaceGeometry \| null>\("avatar_face", \{ id: avatar\.id \}\)/);
-  // One mouth, two owners: the local reader between calls, and the digital
-  // human's own voice during one — Vidu never reports the end of a sentence,
-  // so the lips are held open for roughly as long as reading it out takes.
-  assert.match(frontend, /function setMode\(mode: Mode\)[\s\S]{0,600}syncFaceSpeech\(\)/);
-  assert.match(frontend, /function syncFaceSpeech\(\)[\s\S]{0,160}liveMouthLevel > 0/);
-  assert.match(frontend, /clearTimeout\(liveMouthTimer\)[\s\S]{0,220}text\.length \* 220/);
-  // A still that a call left silent has to be able to come back on its own.
-  assert.match(frontend, /updateFaceVisibility\(\);\n  if \(now - lastAnimationFrame/);
-  // The tracked landmarks are thin bands, so the patches are grown until they
-  // cover the eye and the mouth: a blink drawn on the landmark line alone is
-  // invisible at portrait scale.
-  assert.match(faceSource, /const eyeW = Math\.max\(face\.w \* 0\.085/);
-  assert.match(faceSource, /y: eye\.y \+ eye\.h \/ 2 - Math\.max\(eye\.h \* 2\.4, eyeH\) \/ 2/);
-  assert.match(faceSource, /const lipW = Math\.max\(raw\.w \* 1\.8, face\.w \* 0\.28\)/);
-  // And there is a way to ask whether any of it is really being painted.
-  assert.match(frontend, /function watchFaceLayer\(tag = "自检"\)/);
-  assert.match(frontend, /面部自检\|面部检测\|face \?probe/);
-  assert.match(styleSheet, /\.face-canvas\{position:absolute;z-index:3/);
-  // One face at a time: once Vidu's picture is actually on the stage its video
-  // owns the lips, so the still-face layer is paused and hidden. A line that is
-  // open without a picture (the key colour is still being worked out, or the
-  // set refuses to key) keeps showing the still, and with it the lips.
-  assert.match(styleSheet, /\.shell\.video-live \.face-canvas,[\s\S]{0,140}display:none\}/);
-  assert.match(frontend, /shell\.classList\.add\("video-live"\)/);
-  assert.match(frontend, /shell\.classList\.remove\("video-live"\)/);
-  assert.match(faceSource, /setActive\(active: boolean\): void;/);
-  assert.match(frontend, /const wanted = Boolean\(faceAnimator\)[\s\S]{0,80}!live[\s\S]{0,40};/);
-  assert.match(frontend, /faceAnimator\?\.setActive\(wanted\)/);
-  assert.match(frontend, /shell\.classList\.contains\("is-dialing"\)/);
-  // The geometry is read out of the artwork itself.
-  assert.match(matteSwift, /func faceGeometryJSON\(in image: CGImage\) -> String\?/);
-  assert.match(matteRust, /pub fn face_geometry\(app: &AppHandle, input: &Path\)/);
-  assert.match(avatarsRust, /pub async fn avatar_face\(app: AppHandle, id: String\)/);
-  assert.match(wakeHelper, /if CommandLine\.arguments\.contains\("--test-wake"\)/);
+test("the idle loop is a pre-rendered local video, never patch layers", () => {
+  // The pre-rendered mp4 is fetched from the local avatar store and played
+  // back through the same chroma keyer the live call uses.
+  assert.match(frontend, /invoke<string \| null>\("avatar_idle_video", \{ id: avatar\.id \}\)/);
+  assert.match(frontend, /invoke\("generate_idle_video", \{ id: avatar\.id \}\)/);
+  assert.match(frontend, /new IdlePlayer\(idleCanvas/);
+  assert.match(idleSource, /export class IdlePlayer/);
+  assert.match(idleSource, /setSource\(avatarId: string, source: string \| null\)/);
+  assert.match(idleSource, /createVideoKeyer\(canvas\)/);
+  assert.match(idleSource, /readBackdropClearance\(/);
+  assert.match(idleSource, /REVEAL_CLEARANCE = 0\.85/);
+  // Only a frame whose backdrop is actually gone takes the stage; a drifted
+  // backdrop sends the picture back to the still and re-samples.
+  assert.match(idleSource, /this\.revealed = true/);
+  assert.match(idleSource, /this\.keyer\.setKey\(null\)/);
+  assert.match(styleSheet, /\.idle-character\{position:absolute/);
+  assert.match(styleSheet, /\.shell\.video-live \.idle-character,[\s\S]{0,160}display:none\}/);
+  // Vidu is not involved at playback time: the loop is a data URL from disk.
+  assert.match(avatarsRust, /data:video\/mp4/);
+  assert.match(avatarsRust, /pub async fn generate_idle_video/);
+  assert.match(avatarsRust, /pub fn avatar_idle_video/);
+  assert.match(avatarsRust, /img2video\(/);
+  assert.match(vidu, /pub fn img2video\(/);
+  // The old patch layers are gone for good: no face canvas, no mouth or eye
+  // patches, no geometry probes.
+  assert.doesNotMatch(frontend, /face-canvas|faceAnimator|refreshFace|avatar_face/);
+  assert.doesNotMatch(styleSheet, /\.face-canvas/);
+  assert.doesNotMatch(avatarsRust, /pub async fn avatar_face/);
+  assert.doesNotMatch(matteRust, /pub fn face_geometry/);
 });
 
 test("the credit balance sits next to the button that spends it", () => {
@@ -1194,18 +1182,21 @@ test("call orders dial the named character and nothing else", async () => {
   assert.equal(matchCallCommand("打开视频", cast), null, "that is the video switch");
 });
 
-test("the still face moves on speech, blinks, and reads the mood", async () => {
-  const { syllableEnvelope, blinkAt, moodFor } = await import("../src/face.ts");
-  const samples = Array.from({ length: 240 }, (_, index) => syllableEnvelope(index * 25));
-  assert.ok(Math.min(...samples) >= 0 && Math.max(...samples) <= 1);
-  assert.ok(Math.max(...samples) > 0.6, "the mouth has to actually open");
-  assert.ok(samples.some((value) => value === 0) || Math.min(...samples) < 0.2, "and close again");
-  // A blink is a dip, not a permanent squint.
-  const blinks = Array.from({ length: 400 }, (_, index) => blinkAt(index * 25));
-  assert.ok(Math.max(...blinks) > 0.9);
-  assert.ok(blinks.filter((value) => value > 0.1).length < blinks.length / 4);
-  assert.equal(moodFor("今天天气怎么样？"), "curious");
-  assert.equal(moodFor("太棒了！"), "happy");
-  assert.equal(moodFor("让我想一下这个方案"), "thinking");
-  assert.equal(moodFor("把文件重命名"), "idle");
+test("the idle player stands down for calls and transformations", () => {
+  // One moving picture at a time: the idle loop pauses and hides while Vidu's
+  // own picture is on stage, the ringer is dialing, or the particle tornado
+  // is swapping characters.
+  assert.match(idleSource, /"video-live"/);
+  assert.match(idleSource, /"is-dialing"/);
+  assert.match(idleSource, /"is-transforming"/);
+  assert.match(idleSource, /"is-reforming"/);
+  assert.match(frontend, /function updateIdleVisibility\(\)/);
+  assert.match(frontend, /shell\.classList\.contains\("video-live"\)/);
+  assert.match(frontend, /idlePlayer\.setVisible\(wanted\)/);
+  // The still portrait is only a fallback now: it steps aside when a keyed
+  // frame takes the stage and comes back if the backdrop refuses to key.
+  assert.match(frontend, /onRevealed: \(\) => \{/);
+  assert.match(frontend, /onHidden: \(\) => \{/);
+  assert.match(frontend, /characterImage\.hidden = true/);
+  assert.match(frontend, /characterImage\.hidden = false/);
 });
