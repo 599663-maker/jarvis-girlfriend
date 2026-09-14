@@ -3,6 +3,8 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 src-tauri/wake-helper/JarvisWakeListener.app/
+src-tauri/wake-helper/JarvisVision.app/
+src-tauri/wake-helper/JarvisMatte
 runtime/*
 !runtime/.gitkeep
 .DS_Store
