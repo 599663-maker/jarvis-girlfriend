@@ -1225,6 +1225,13 @@ if (currentWindow) {
     }
   });
   await listen<WakeEvent>("jarvis-wake", async ({ payload }) => {
+    // The Vidu call owns the microphone and the conversation: a wake event
+    // that escaped the disarmed helper must not open the local voice or
+    // speak the local greeting over the digital human.
+    if (liveCall?.active) {
+      void invoke("web_log", { message: "实时通话：忽略通话期间的唤醒事件" }).catch(() => {});
+      return;
+    }
     transcript.textContent = "“嗨，Jarvis”";
     state.manualStop = false;
     // Read the mode again instead of trusting the startup value: a wake can
@@ -1277,6 +1284,15 @@ if (currentWindow) {
   await listen<{ text: string }>("jarvis-command", ({ payload }) => {
     const text = (payload?.text ?? "").trim();
     if (!text) return;
+    // The same sentence is already handled through Vidu's transcription
+    // while a call is up; a duplicate local run would send a second
+    // "朗读：" line that cuts the first one off mid-sentence.
+    if (liveCall?.active) {
+      void invoke("web_log", {
+        message: `实时通话：忽略通话期间的本体指令 ${text.length > 40 ? `${text.slice(0, 40)}…` : text}`,
+      }).catch(() => {});
+      return;
+    }
     ($("#command-input") as HTMLInputElement).value = "";
     void runCommand(text);
   });
@@ -2173,7 +2189,7 @@ async function handleLiveUserText(text: string) {
     liveTranscribeBuffer = "";
     if (liveCall?.isEcho(settled)) return;
     void deliverLiveUserText(settled);
-  }, 1500);
+  }, 900);
 }
 
 async function deliverLiveUserText(text: string) {

@@ -535,7 +535,7 @@ test("spoken close sentences are recognised without eating real tasks", () => {
 test("the wake summons Jarvis with the assembly in text mode", () => {
   const wakeAt = frontend.indexOf('await listen<WakeEvent>("jarvis-wake"');
   assert.ok(wakeAt > 0, "the wake handler exists");
-  const handler = frontend.slice(wakeAt, wakeAt + 1200);
+  const handler = frontend.slice(wakeAt, wakeAt + 1600);
   assert.match(handler, /if \(textOnlyMode\) \{/);
   assert.match(handler, /setMode\("voice-starting"\);/);
   assert.match(handler, /if \(state\.mode === "voice-starting"\) setMode\("listening"\);/);
@@ -732,7 +732,9 @@ test("the wake word is answered out loud", () => {
   assert.match(backend, /greeting ready pack=/);
   // The greeting plays with the microphone open: the order that follows the
   // wake word is usually spoken immediately and would otherwise be swallowed.
-  assert.match(backend, /async fn wake_greeting\(app: AppHandle\) -> Result<\(\), String> \{[\s\S]{0,500}play_wav\([\s\S]{0,300}false,[\s\S]{0,120}\)\n\s+\.await/);
+  assert.match(backend, /async fn wake_greeting\(app: AppHandle\) -> Result<\(\), String> \{[\s\S]{0,900}play_wav\([\s\S]{0,300}false,[\s\S]{0,120}\)\n\s+\.await/);
+  // While the Vidu call owns the microphone the local greeting stays silent.
+  assert.match(backend, /wake greeting skipped: live call active/);
   assert.match(backend, /if hold_microphone \{\n\s+write_wake_control\(app, "mute"\)\.await;/);
   // One voice per summon: the supervisor no longer greets on its own, the
   // front-end is the single source, and the greeting wave owns the first line.
@@ -1034,11 +1036,16 @@ test("the digital human carries Codex the orders and reads the answers back", ()
   assert.match(liveRust, /只负责「出镜」和「传话」/);
   assert.match(liveRust, /用户说出的每一句话都是发给智能体的指令，不是对你说话/);
   assert.match(liveRust, /绝不抢答/);
-  // The built-in LLM is squeezed to one short sentence, and the platform must
-  // not rewrite the "never speak first" persona behind our back.
+  // The token budget must fit a complete answer (40 tokens used to cut every
+  // sentence off after a few words), and the platform must not rewrite the
+  // "never speak first" persona behind our back.
   assert.match(liveRust, /"temperature": 0\.2/);
-  assert.match(liveRust, /"max_tokens": 40/);
+  assert.match(liveRust, /"max_tokens": 800/);
   assert.match(liveRust, /"persona_enhance": false/);
+  // The platform's default opening line greets on its own; it is silenced so
+  // the app's "朗读：" hello is the only one spoken at connect time.
+  assert.match(liveRust, /"greeting_instruction": "接通后保持安静/);
+  assert.match(liveRust, /"silence_duration_ms": 6000/);
 });
 
 test("a live call keeps the microphone and silences self-started answers", () => {

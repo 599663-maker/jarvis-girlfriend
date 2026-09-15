@@ -618,6 +618,13 @@ fn start_wake_supervisor(app: AppHandle) {
                         }
                         Some("wake") => {
                             raise_jarvis_window(&app);
+                            if LIVE_CALL_ACTIVE.load(Ordering::SeqCst) {
+                                // The Vidu call owns the microphone: a wake
+                                // helper that was already mid-phrase must not
+                                // hand the master's voice to the local agent.
+                                speak_log("wake event dropped: live call active");
+                                continue;
+                            }
                             if capture_command {
                                 // The helper stays on the microphone so the
                                 // sentence after the wake phrase becomes the
@@ -645,14 +652,23 @@ fn start_wake_supervisor(app: AppHandle) {
                                 .trim()
                                 .to_owned();
                             if !text.is_empty() {
-                                schedule_backchannel(&app, &text);
-                                if conversation {
-                                    // Continuous conversation: hand the spoken
-                                    // sentence straight to the renderer and keep
-                                    // the same listener alive for the next turn.
-                                    let _ = app.emit("jarvis-command", json!({ "text": text }));
+                                if LIVE_CALL_ACTIVE.load(Ordering::SeqCst) {
+                                    // A command transcribed by the wake helper
+                                    // while the Vidu call is up is a duplicate:
+                                    // Vidu's own transcription already owns the
+                                    // turn, and a second agent run would send a
+                                    // second "朗读：" line over the first.
+                                    speak_log("wake command dropped: live call active");
                                 } else {
-                                    command_text = Some(text);
+                                    schedule_backchannel(&app, &text);
+                                    if conversation {
+                                        // Continuous conversation: hand the spoken
+                                        // sentence straight to the renderer and keep
+                                        // the same listener alive for the next turn.
+                                        let _ = app.emit("jarvis-command", json!({ "text": text }));
+                                    } else {
+                                        command_text = Some(text);
+                                    }
                                 }
                             }
                         }
@@ -660,6 +676,9 @@ fn start_wake_supervisor(app: AppHandle) {
                             let _ = app.emit("jarvis-conversation", message.clone());
                         }
                         Some("barge") => {
+                            if LIVE_CALL_ACTIVE.load(Ordering::SeqCst) {
+                                continue;
+                            }
                             // The user talked over Jarvis: drop the answer
                             // immediately and let the listener own the turn.
                             speak_stop_players().await;
@@ -697,7 +716,11 @@ fn start_wake_supervisor(app: AppHandle) {
             }
 
             if let Some(text) = command_text.take() {
-                let _ = app.emit("jarvis-command", json!({ "text": text }));
+                if !LIVE_CALL_ACTIVE.load(Ordering::SeqCst) {
+                    let _ = app.emit("jarvis-command", json!({ "text": text }));
+                } else {
+                    speak_log("wake command dropped: live call active");
+                }
             }
             *state.wake_control.write().await = None;
             if woke || !conversation || !state.wake_enabled.load(Ordering::SeqCst) {
@@ -2131,6 +2154,13 @@ fn schedule_backchannel(app: &AppHandle, command: &str) {
 
 #[tauri::command]
 async fn speak(app: AppHandle, text: String) -> Result<(), String> {
+    if LIVE_CALL_ACTIVE.load(Ordering::SeqCst) {
+        // The digital human owns the voice while the Vidu call is up. Any
+        // local playback would be picked up by her microphone as new speech
+        // and talked over by the built-in model.
+        speak_log("local speech skipped: live call active");
+        return Ok(());
+    }
     speak_with(&app, active_voice_pack(), &text).await
 }
 
@@ -2140,6 +2170,10 @@ async fn speak(app: AppHandle, text: String) -> Result<(), String> {
 /// command, and the two can never play at once.
 #[tauri::command]
 async fn wake_greeting(app: AppHandle) -> Result<(), String> {
+    if LIVE_CALL_ACTIVE.load(Ordering::SeqCst) {
+        speak_log("wake greeting skipped: live call active");
+        return Ok(());
+    }
     if !speak_replies() {
         return Ok(());
     }

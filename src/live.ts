@@ -198,6 +198,10 @@ export class LiveCall {
   private static readonly SPEECH_TAIL_MS = 800;
   private static readonly ECHO_WINDOW_MS = 90000;
   private static readonly SENT_LINE_WINDOW_MS = 120000;
+  /** After a line was heard being read, only its trailing syllable is ours. */
+  private static readonly READING_TAIL_MS = 1200;
+  /** Each text_msg stays far under the model's token budget when read back. */
+  private static readonly SAY_CHUNK_CHARS = 280;
 
   constructor(canvas: HTMLCanvasElement, handlers: LiveHandlers) {
     this.canvas = canvas;
@@ -538,6 +542,10 @@ export class LiveCall {
       const brief = text.length > 60 ? `${text.slice(0, 60)}…` : text;
       if (type === 9) {
         trace(`听写用户：${brief}`);
+        // The master's voice is a barge-in signal: any model self-talk is cut
+        // at once, and if a "朗读：" line is still on her lips the master has
+        // the floor. Her own echo is never a barge-in.
+        if (!/^朗读[:：]/.test(text) && !this.isEcho(text)) this.interrupt();
         this.handlers.onUserText?.(text);
       } else {
         trace(`听写数字人：${brief}`);
@@ -562,15 +570,30 @@ export class LiveCall {
     while (this.sentLines.length > 0 && now - this.sentLines[0].at > LiveCall.SENT_LINE_WINDOW_MS) {
       this.sentLines.shift();
     }
-    const reading = this.sentLines.some((sent) => bare.includes(sent.text));
+    // Her reading of our line comes back as type-10 too; ASR can garble it, so
+    // a fuzzy match protects the reading from being cut by our own police.
+    const reading = this.sentLines.some(
+      (sent) => bare.includes(sent.text) || speechOverlap(bare, sent.text) >= 0.45,
+    );
     this.spokenLog.push({ text: bare, at: now });
     while (this.spokenLog.length > 6) this.spokenLog.shift();
-    if (reading || now < this.readingUntil || this.stopping) return;
+    if (this.stopping) return;
+    if (reading) {
+      // The line just left her lips: the model's self-started follow-up starts
+      // right after it, so policing re-arms now instead of waiting out the
+      // whole reading estimate. That estimate used to suppress the police for
+      // seconds and the follow-up talked over the next answer.
+      this.readingUntil = Math.min(this.readingUntil, now + LiveCall.READING_TAIL_MS);
+      window.clearTimeout(this.botInterruptTimer);
+      this.botInterruptTimer = 0;
+      return;
+    }
+    if (now < this.readingUntil) return;
     window.clearTimeout(this.botInterruptTimer);
     this.botInterruptTimer = window.setTimeout(() => {
       trace(`打断自发回答：${bare.length > 40 ? `${bare.slice(0, 40)}…` : bare}`);
       this.interrupt();
-    }, 500);
+    }, 120);
   }
 
   /**
@@ -582,7 +605,12 @@ export class LiveCall {
   say(text: string) {
     const content = text.trim();
     if (!content) return;
-    this.speechQueue.push(content);
+    // One text_msg per stretch keeps every reading inside the model's token
+    // budget, so a long answer is never truncated mid-sentence by max_tokens.
+    const chars = Array.from(content);
+    for (let i = 0; i < chars.length; i += LiveCall.SAY_CHUNK_CHARS) {
+      this.speechQueue.push(chars.slice(i, i + LiveCall.SAY_CHUNK_CHARS).join(""));
+    }
     this.drainSpeechQueue();
   }
 

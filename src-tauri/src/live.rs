@@ -76,6 +76,9 @@ pub fn live_persona(avatar: &Avatar) -> String {
 不要添加、删减、改写，也不要回应它的内容。\n\
 - 一次只念一条「朗读：」内容；必须把当前这一条完整念完，念完之前不接受、\
 不回应任何新输入，也不许中途换句子；念完后立刻安静，等待下一条「朗读：」。\n\
+- 收到「朗读：」文本后，你的全部输出只能是冒号后面的内容本身：必须从它\
+的第一个字念到最后一个字，念完最后一个字后立即停止输出，不许续写、评论、\
+提问、总结或回应。\n\
 - 不要使用 Markdown、列表、表情符号、括号里的动作说明或旁白。",
         avatar.persona.trim()
     )
@@ -166,6 +169,12 @@ fn create_body(avatar: &Avatar, asset_id: &str, image_uri: Option<String>) -> Va
         "voice": live_voice(avatar),
         "idle_action": true,
         "persona_enhance": false,
+        // The platform's default opening line is a random greeting that fires
+        // the moment the avatar joins and collides with the app's own
+        // "朗读：" hello. Overriding it with silence hands the very first
+        // utterance to the app as well.
+        "greeting_instruction": "接通后保持安静，不要主动说话，等待第一条以「朗读：」开头的文字指令。",
+        "farewell_enabled": false,
     });
     if !asset_id.is_empty() {
         avatar_payload["id"] = json!(asset_id);
@@ -177,25 +186,28 @@ fn create_body(avatar: &Avatar, asset_id: &str, image_uri: Option<String>) -> Va
         "avatar": avatar_payload,
         "audio": {"enable_transcription": true},
         "vad": {
-            // semantic means "the user opens their mouth and the current line
-            // is interrupted", and the digital human's own voice bleeds into
-            // the published microphone: she used to interrupt herself every
-            // sentence. server filters echoes and background noise instead.
+            // server filters echoes and background noise instead of treating
+            // every sound as a barge-in. The silence window is maxed out so
+            // the built-in model only earns a turn six seconds after the
+            // master stops speaking: the app's agent normally hands back the
+            // "朗读：" line inside that window, and a text_msg supersedes the
+            // pending self-started answer.
             "type": "server",
             "threshold": 0.7,
-            "silence_duration_ms": 800,
+            "silence_duration_ms": 6000,
             "idle_timeout_ms": 0
         },
-        // The S1 model always hears the room, but the app is the only writer:
-        // every spoken line arrives as a "朗读：…" text. The built-in LLM is
-        // therefore squeezed to one short, repetitive sentence, so an answer
-        // it makes on its own stays short enough to be cut off instantly and
-        // never talks over the agent's line.
+        // The app is the only writer and every spoken line arrives as a
+        // "朗读：…" text, so the budget must fit a complete answer: 40 tokens
+        // cut every sentence off after a few words, which sounded like "话没
+        // 说完又说起另一件事". Any self-started answer the model still makes
+        // is caught and interrupted by the webview instead of being squeezed
+        // here.
         "llm": {
             "temperature": 0.2,
             "top_p": 0.6,
             "top_k": 10,
-            "max_tokens": 40,
+            "max_tokens": 800,
             "frequency_penalty": 1.6,
             "presence_penalty": 0
         },
