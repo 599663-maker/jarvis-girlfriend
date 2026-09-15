@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="assets/logo.png" width="240" alt="Jarvis Girlfriend logo">
+  <img src="docs/images/characters/xiaorourou.png" width="240" alt="Xiaorourou portrait">
 </p>
 
-<h1 align="center">Jarvis Girlfriend</h1>
+<h1 align="center">AI Girlfriend · Desktop AI Companion</h1>
 
 <p align="center">
-  Wake your Codex-powered girlfriend from your desktop with “Hey Jarvis.”
+  Say "Hi Xiaorourou" — and she rises from your Mac desktop.
 </p>
 
 <p align="center">
@@ -15,126 +15,145 @@
 <p align="center">
   <a href="https://github.com/599663-maker/jarvis-girlfriend/releases/latest">Download the latest DMG</a>
   ·
-  <a href="INTRO.md">Introduction</a>
+  <a href="INTRO.md">Project intro</a>
   ·
-  <a href="CONTRIBUTING.md">Contribute</a>
+  <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 <p align="center">
-  <img src="public/assets/jarvis-character-v2.png" width="520" alt="Jarvis Girlfriend transparent avatar">
+  <img src="docs/images/scene-greet.png" width="560" alt="Xiaorourou waving hello">
 </p>
 
-Jarvis Girlfriend is a local voice companion for macOS, based on the
-[Jarvis × Codex](https://github.com/Big-Guan/jarvis-codex) project. Say the
-wake phrase and a transparent Jarvis window rises from the desktop, then
-connects to the same Codex thread through the Codex app-server WebRTC
-interface. You can speak naturally, interrupt a response, continue the
-conversation, and ask Codex to perform real work in the selected project.
+AI Girlfriend is a local voice companion for macOS, powered by Codex. Say
+"Hi Xiaorourou" or "Hi Zhang Yuanying" and a transparent window rises from your
+desktop; she waves hello, then joins the same Codex thread through the Codex
+app-server WebRTC connection. You can chat naturally, interrupt replies, ask
+follow-ups, or let Codex actually execute tasks in a project directory you
+choose.
 
-Read [INTRO.md](INTRO.md) for a dedicated introduction to Jarvis Girlfriend:
-its personality, the logo, features, and how it relates to Jarvis × Codex.
+- Multiple characters: Xiaorourou (小肉肉) and Zhang Yuanying (张元英) are here,
+  and you can create up to 10 of your own.
+- Every character has three pre-rendered local scenes: a greeting wave, a
+  waiting pace, and a static portrait.
+- Vidu S1 realtime video calls are dialed only when you explicitly ask — no
+  credits are consumed otherwise.
+- Read the [project intro](INTRO.md) for the characters, features and design.
 
-> Current status: wake, live transcription, voice responses, and Codex task
-> execution have been verified on Apple Silicon running macOS 26. Realtime
-> conversation is still an experimental Codex app-server capability, so
-> upstream protocol changes may require compatibility updates.
+> Current status: wake word, live transcription, voice replies and Codex task
+> execution are verified on macOS 26 Apple Silicon. Realtime conversation is
+> still an experimental Codex app-server capability and may need adaptations
+> when the upstream protocol changes.
 
-## What it does
+## Characters
 
-- Recognizes “Hi/Hey Jarvis” and Chinese Jarvis wake phrases on-device
-- Opens a transparent, borderless Tauri 2 desktop interface
-- Connects directly to Codex Voice through app-server V3 WebRTC
-- Keeps voice, text, tool activity, and task execution in the same Codex thread
-- Stores one persistent thread per canonical workspace path
-- Supports natural turn-taking, interruption, follow-up questions, and STOP
-- Shows an optional realtime digital human (Vidu S1) that speaks along with Codex
-- Offers safe, automatic workspace, and full-access permission profiles
-- Runs in the background at login and raises the window on warm or cold wake
-- Falls back to text input when Voice is temporarily unavailable
+<p align="center">
+  <img src="docs/images/characters/xiaorourou.png" width="200" alt="Xiaorourou">
+  <img src="docs/images/characters/zhangyuanying.png" width="200" alt="Zhang Yuanying">
+</p>
 
-Jarvis does not simulate clicks in the Codex or ChatGPT applications, register
-a global hotkey, or create a separate GPT-Live session. It reuses the local
-Codex authentication and app-server runtime.
+- **Xiaorourou (小肉肉)** — a cute, soft-spoken girl; realtime call voice Momo;
+  greeting "Hi, master — Xiaorourou is here"; ships with the full wave / pace /
+  static scene set and is the current default character.
+- **Zhang Yuanying (张元英)** — gentle, sweet and energetic; realtime call voice
+  Cindy; greeting "Yuanying is here, master! What shall we do today?".
+- **Your own characters** — create up to 10: pick a name, write a persona,
+  choose a voice pack, generate art with Vidu or import a local image that gets
+  cut out automatically.
 
-## Visual evolution
+Every character carries its own persona, voice and a name-based wake phrase
+("Hi + name"); say "switch to &lt;name&gt;" to change on the fly.
 
-### v0.1.x — holographic workstation
+## Three local scenes
 
-![Jarvis Girlfriend v0.1.x holographic workstation](docs/images/jarvis-main-ui.png)
+All three scenes are pre-rendered local videos — fully offline playback with no
+credit cost — and appear only in their matching situation:
 
-The first version used a persistent HUD with task roles, transcripts, text
-input, and STOP controls. It emphasized visibility into what Codex was doing.
+| ① Greeting wave | ② Waiting pace | ③ Static portrait |
+| --- | --- | --- |
+| <img src="docs/images/scene-greet.png" width="300" alt="Greeting wave"> | <img src="docs/images/scene-wait.png" width="300" alt="Waiting pace"> | <img src="docs/images/scene-static.png" width="300" alt="Static portrait"> |
+| Waves and says "Hi, master — Xiaorourou is here" when the window opens | Hands folded, pacing gently while you ask and Codex answers | Stands still whenever there is nothing to do |
 
-### v0.2.0 — transparent character interface
+## Realtime video calls (optional)
 
-The second version makes Jarvis the interface itself. Particles, armor shards,
-and energy rings assemble the character when it wakes. Controls remain hidden
-until the pointer enters the character area, while audio levels and task states
-drive breathing, scanning, acknowledgement, approval, completion, and error
-effects.
+Say "call Xiaorourou" or "open the video" to dial a Vidu S1 realtime digital
+human: she speaks in sync, keyed live onto your desktop as a transparent
+overlay. Hanging up returns to the local scenes automatically.
 
-The visual layer consumes the existing audio, transcript, and task events. It
-does not replace the wake listener, WebRTC connection, workspace thread
-resumption, permission profiles, or interruption logic.
+## Key features
+
+- On-device speech recognition for the wake phrase: Hi/Hey + character name
+- Tauri 2 + Rust + TypeScript transparent, frameless desktop UI
+- Connects to Codex Voice directly through the app-server V3 WebRTC API
+- Voice, text, tool events and task execution share one Codex thread
+- Threads are persisted and resumed per normalized working directory
+- Natural turn-taking, mid-reply interruption, follow-ups and STOP
+- Optional camera vision — frames are processed locally only
+- Three permission levels: safe, auto office, and full access
+- Starts in the background at login; the window rises on cold or warm wake
+- Text input fallback when Voice is temporarily unavailable
+
+The app does not simulate clicks on the Codex or ChatGPT windows, does not
+register global hotkeys, and does not create a second GPT-Live session. It
+reuses your local Codex login and the app-server runtime.
 
 ## How it works
 
 ```text
-JarvisWakeListener (on-device speech recognition)
+Wake listener (on-device "Hi + character name")
         ↓
-Tauri / Rust host raises the Jarvis window
+Tauri / Rust host raises the transparent window and plays the greeting wave
         ↓
 The wake listener releases the microphone
         ↓
-WebView creates a WebRTC offer
+The WebView creates the WebRTC offer
         ↓
 Codex app-server V3 realtime conversation
         ↓
-One Codex thread for voice, text, tools, and project work
+Voice, text, tools and project tasks share one Codex thread
 ```
 
 The Swift wake helper and the Voice session never capture the microphone at the
-same time. See [Architecture](docs/ARCHITECTURE.md) for the runtime, thread, and
-trust boundaries.
+same time. See the [architecture docs](docs/ARCHITECTURE.md) for runtime, thread
+lifecycle and trust boundaries.
 
 ## Quick start
 
-1. Install and sign in to Codex App, ChatGPT App, or Codex CLI on your Mac.
-2. Download the latest DMG and drag `Jarvis Girlfriend` into Applications.
-3. Allow microphone and speech-recognition access on first launch.
-4. Open Settings and select the project directory Codex should work in.
-5. Close the window to leave Jarvis listening in the background.
-6. Say “Hey Jarvis,” then speak your task when the window appears.
-7. Move the pointer over Jarvis to reveal controls; select `STOP` to interrupt
-   Voice and the active task.
+1. Install and sign in to the Codex app, ChatGPT app or Codex CLI on your Mac.
+2. Download the latest DMG and drag the app into Applications.
+3. Allow microphone and speech recognition on first launch.
+4. Open settings and pick the project directory Codex should work in.
+5. Close the window and leave her listening in the background.
+6. Say "Hi Xiaorourou" to your Mac, then speak your task.
+7. Move the mouse over the character to reveal controls; `STOP` interrupts the
+   Voice session and the current task.
 
-If Voice is unavailable, use the text field at the bottom. Voice and text use
-the thread associated with the current workspace.
+Use the text input at the bottom while Voice is unavailable. Both voice and
+text go to the thread for the current working directory.
 
-## Permission profiles
+## Permission modes
 
-| Profile | Sandbox | Approval policy | Intended use |
+| Mode | Sandbox | Approval policy | Use case |
 | --- | --- | --- | --- |
-| Safe | `workspace-write` | `on-request` | Confirm operations when needed |
-| Auto | `workspace-write` | `never` | Work autonomously inside the workspace |
-| Full | `danger-full-access` | `never` | Explicitly enabled high-trust work |
+| Safe | `workspace-write` | `on-request` | Confirm actions when needed |
+| Auto office | `workspace-write` | `never` | Autonomous work inside the directory |
+| Full access | `danger-full-access` | `never` | High-trust tasks you opt into |
 
-Permission profile values are validated by the Rust host. The frontend cannot
-send arbitrary sandbox or approval-policy strings.
+Permission config is validated by the Rust host; the frontend cannot pass
+arbitrary sandbox or approval strings.
 
 ## Requirements
 
-For regular use:
+Everyday use:
 
 - macOS 13 or later
-- Apple Silicon for the currently published DMG
-- Codex App, ChatGPT App, or Codex CLI installed and signed in
-- Microphone and speech-recognition permission
+- The published DMG targets Apple Silicon
+- Codex app, ChatGPT app or Codex CLI installed and signed in
+- Microphone and speech recognition permissions
 
-For source development:
+Development:
 
 - Node.js 20 or later
-- Rust stable with `rustfmt` and `clippy`
+- Stable Rust with `rustfmt` and `clippy`
 - Xcode Command Line Tools and Swift
 
 ## Development
@@ -145,73 +164,70 @@ npm run check
 npm run dev
 ```
 
-To set the initial development workspace:
+Set the initial working directory for development:
 
 ```bash
 JARVIS_WORKSPACE=/absolute/path npm run dev
 ```
 
-You can also save a workspace in Jarvis Settings.
+You can also save the working directory in the settings panel.
 
 ## Testing
 
-Before opening a pull request, run:
+Run before opening a pull request:
 
 ```bash
 npm run check
 npm run build
 ```
 
-Changes to wake, microphone, Voice, STOP, thread resumption, permissions, or
-packaging also require a real macOS smoke test. The current automated tests
-verify important protocol and lifecycle invariants, but cannot prove that the
-experimental realtime service or macOS privacy prompts work end to end.
+If you changed wake, microphone, Voice, STOP, thread resumption, permissions or
+packaging, run a smoke test on a real macOS machine as well. The automated
+tests cover important protocol and lifecycle constraints, but cannot prove the
+experimental realtime service or macOS privacy grants end to end.
 
-## Build
+## Building
 
 ```bash
 npm run build
 ```
 
-Expected outputs:
+Expected artifacts:
 
 - `src-tauri/target/release/bundle/macos/Jarvis Girlfriend.app`
 - `src-tauri/target/release/bundle/dmg/Jarvis Girlfriend_0.2.0_aarch64.dmg`
 
-The build script creates and signs `JarvisWakeListener.app`. The generated app
-bundle is not committed to Git.
+The build script generates and signs `JarvisWakeListener.app`; generated app
+bundles are not committed to Git.
 
 ## Production releases
 
-Local builds use the ad-hoc signing identity `-`. Public distribution requires
-an Apple Developer ID Application certificate and notarization. Do not publish
-an ad-hoc build as a production release.
+Local builds default to the ad-hoc signing identity `-`. Public distribution
+must use an Apple Developer ID Application certificate and notarization; never
+describe an ad-hoc build as production. See the [production checklist](docs/PRODUCTION.md)
+for signing, notarization, entitlements and smoke test requirements.
 
-See the [production release checklist](docs/PRODUCTION.md) for signing,
-notarization, entitlement, and smoke-test requirements.
+## Privacy & security
 
-## Privacy and security
+- The wake phrase always uses on-device speech recognition.
+- Microphone audio reaches Codex Voice only after a wake.
+- Raw audio and login credentials are never stored.
+- The WebView uses a restrictive Content Security Policy.
+- Auto office mode is limited to the working directory you selected.
+- Full access must be opted into explicitly.
+- Siri is not part of the main path.
 
-- Wake recognition requires on-device speech recognition.
-- Microphone audio reaches Codex Voice only after wake.
-- Raw audio and login credentials are not stored by Jarvis.
-- The WebView uses a restrictive content security policy.
-- Automatic mode remains confined to the selected workspace.
-- Full access must be selected explicitly.
-- Siri is not part of the runtime path.
-
-Please report vulnerabilities according to [SECURITY.md](SECURITY.md), not in a
-public issue.
+Report security issues privately as described in [SECURITY.md](SECURITY.md), not
+in public issues.
 
 ## License
 
-Jarvis Girlfriend is released under the [GNU General Public License v3.0](LICENSE).
-It is based on [Jarvis × Codex](https://github.com/Big-Guan/jarvis-codex) by
-Big-Guan, and keeps the original GPL-3.0 license and attribution.
+Licensed under [GNU General Public License v3.0](LICENSE). Built on Big-Guan's
+open-source voice Codex project; the original GPL-3.0 license and attribution
+are retained.
 
 ## Contributing
 
-Contributions are welcome. The `main` branch is protected and does not accept
-direct pushes. Contributors must fork the repository, create a branch in their
-fork, and open a pull request. Read [CONTRIBUTING.md](CONTRIBUTING.md) before
-starting work.
+Contributions are welcome. The `main` branch is protected against direct
+pushes. Fork the repository, create a branch in your fork and open a pull
+request. Read [CONTRIBUTING.md](CONTRIBUTING.md) before you start.

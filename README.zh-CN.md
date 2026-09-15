@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="assets/logo.png" width="240" alt="Jarvis Girlfriend Logo">
+  <img src="docs/images/characters/xiaorourou.png" width="240" alt="小肉肉立绘">
 </p>
 
-<h1 align="center">Jarvis Girlfriend</h1>
+<h1 align="center">AI Girlfriend · 桌面 AI 女友</h1>
 
 <p align="center">
-  一声“嗨 Jarvis”，把你的 Codex 女友从桌面唤醒。
+  嗨，小肉肉 —— 一声呼唤，她从你的 Mac 桌面醒来。
 </p>
 
 <p align="center">
@@ -21,61 +21,76 @@
 </p>
 
 <p align="center">
-  <img src="public/assets/jarvis-character-v2.png" width="520" alt="Jarvis Girlfriend 透明角色界面">
+  <img src="docs/images/scene-greet.png" width="560" alt="小肉肉打招呼挥手">
 </p>
 
-Jarvis Girlfriend 是一个 macOS 本地语音伴侣，基于
-[Jarvis × Codex](https://github.com/Big-Guan/jarvis-codex) 项目构建。说出唤醒词后，
-透明窗口从桌面升起，粒子与装甲碎片聚合成 Jarvis；随后通过 Codex app-server
-WebRTC 进入同一个 Codex 线程。你可以自然对话、打断回复、继续追问，也可以让
-Codex 在选定项目中真正执行任务。
+桌面 AI 女友是一个 macOS 本地语音伴侣，由 Codex 驱动。说一句「嗨小肉肉」或
+「嗨张元英」，透明窗口就从桌面升起，她会挥手和你打招呼；随后通过 Codex
+app-server WebRTC 进入同一个 Codex 线程。你可以自然对话、打断回复、继续追问，
+也可以让 Codex 在选定项目中真正执行任务。
 
-想要了解它的设定、Logo 和功能特色，请阅读单独的[项目介绍](INTRO.md)。
+- 多角色：小肉肉、张元英已经登场，还可以创建最多 10 个自定义角色。
+- 每个角色都有提前渲染好的三幕本地动画：打招呼挥手、等待踱步、静态立绘。
+- 只有明确说「呼叫她」才会拨通 Vidu S1 实时视频通话，平时不消耗任何积分。
+- 想要了解角色设定与功能特色，请阅读单独的[项目介绍](INTRO.md)。
 
 > 当前状态：已在 macOS 26 Apple Silicon 实机验证唤醒、实时转写、语音回复和
 > Codex 任务执行。Realtime conversation 仍是实验性的 Codex app-server 能力，
 > 上游协议升级时可能需要同步适配。
 
+## 角色阵容
+
+<p align="center">
+  <img src="docs/images/characters/xiaorourou.png" width="200" alt="小肉肉">
+  <img src="docs/images/characters/zhangyuanying.png" width="200" alt="张元英">
+</p>
+
+- **小肉肉** —— 小可爱女生，实时通话音色 Momo，问候语「Hi 主人，小肉肉来了」，
+  拥有完整的挥手、踱步、静态三幕动画，是当前默认角色。
+- **张元英** —— 温柔甜美、元气满满，实时通话音色 Cindy，问候语
+  「元英在呢，主人！今天想让我陪你做点什么呀？」。
+- **你的自定义角色** —— 最多创建 10 个：定名字、写人设、选音色，用 Vidu 生成
+  形象，或导入本地图片自动抠出人物主体。
+
+每个角色都自带人设、音色和专属唤醒词「嗨 + 名字」；说一句「切换成 &lt;名字&gt;」
+就能直接变身。
+
+## 三幕式本地动画
+
+三幕动画都是提前渲染好的本地视频，全程离线播放、不消耗积分，只在对应场景出现：
+
+| ① 打招呼挥手 | ② 等待踱步 | ③ 静态立绘 |
+| --- | --- | --- |
+| <img src="docs/images/scene-greet.png" width="300" alt="打招呼挥手"> | <img src="docs/images/scene-wait.png" width="300" alt="等待踱步"> | <img src="docs/images/scene-static.png" width="300" alt="静态立绘"> |
+| 刚打开窗口时挥手，并说「Hi 主人，小肉肉来了」 | 你提问、Codex 回答期间，手放身前轻轻踱步 | 没有指令时保持静态立绘，随时待命 |
+
+## 实时视频通话（可选）
+
+说「呼叫小肉肉」或「打开视频」，才会拨通 Vidu S1 实时数字人通话：她会同步开口
+说话，画面实时抠像透明显示在桌面上。挂断后自动回到本地三幕动画。
+
 ## 主要能力
 
-- 使用本机语音识别唤醒词：嗨/嘿 Jarvis、Hi/Hey Jarvis、嗨/嘿贾维斯
+- 本机语音识别唤醒词：嗨/嘿 + 角色名（嗨小肉肉、嗨张元英）
 - Tauri 2 + Rust + TypeScript 透明无边框桌面界面
 - 通过 app-server V3 WebRTC 直接连接 Codex Voice
 - 语音、文字、工具事件和任务执行共用同一个 Codex 线程
 - 按规范化后的工作目录持久化并续接不同线程
 - 支持自然轮流说话、回复中打断、连续追问和 STOP
-- 可选 Vidu S1 实时数字人形象，与 Codex 同步开口说话
+- 可选摄像头视觉感知，画面只在本机处理
 - 提供安全、自动办公和完全访问三档权限
 - 登录时后台启动，冷启动或暖启动唤醒后升起窗口
 - Voice 临时不可用时可以使用文字输入
 
-Jarvis 不模拟点击 Codex 或 ChatGPT 窗口，不绑定全局热键，也不创建第二套
+应用不模拟点击 Codex 或 ChatGPT 窗口，不绑定全局热键，也不创建第二套
 GPT-Live 会话。它复用本机 Codex 的登录状态和 app-server runtime。
-
-## 视觉演进
-
-### v0.1.x：全息工作台
-
-![Jarvis Girlfriend v0.1.x 全息工作台](docs/images/jarvis-main-ui.png)
-
-第一版采用完整 HUD 工作台，任务角色、对话记录、文字输入和 STOP 控制常驻页面，
-重点是让用户清楚地看到 Codex 正在做什么。
-
-### v0.2.0：透明角色界面
-
-第二版让 Jarvis 本身成为界面。唤醒时，粒子、装甲碎片与能量环聚合成完整角色；
-鼠标移入角色区域后才显示控制按钮。音频电平和任务状态会驱动呼吸、扫描、确认、
-等待授权、完成和异常等视觉反馈。
-
-视觉层只消费已有的音频、转写和任务事件，不替换唤醒监听、WebRTC 连接、工作目录
-线程续接、权限模式或任务中断逻辑。
 
 ## 工作原理
 
 ```text
-JarvisWakeListener（本机语音识别）
+唤醒监听（本机语音识别「嗨 + 角色名」）
         ↓
-Tauri / Rust 宿主升起 Jarvis 窗口
+Tauri / Rust 宿主升起透明窗口，播放打招呼挥手
         ↓
 唤醒监听器释放麦克风
         ↓
@@ -92,12 +107,12 @@ Swift 唤醒 helper 与 Voice 会话不会同时采集麦克风。运行时、�
 ## 快速开始
 
 1. 在 Mac 上安装并登录 Codex App、ChatGPT App 或 Codex CLI。
-2. 下载最新 DMG，把 `Jarvis Girlfriend` 拖入“应用程序”。
+2. 下载最新 DMG，把应用拖入「应用程序」。
 3. 首次启动时允许麦克风和语音识别权限。
 4. 打开设置，选择希望 Codex 工作的项目目录。
-5. 关闭窗口，让 Jarvis 留在后台监听。
-6. 对电脑说“嗨 Jarvis”，窗口升起后直接说出任务。
-7. 将鼠标移到 Jarvis 上显示控制按钮；点击 `STOP` 可中断 Voice 和当前任务。
+5. 关闭窗口，让她留在后台监听。
+6. 对电脑说「嗨小肉肉」，窗口升起后直接说出任务。
+7. 将鼠标移到角色上显示控制按钮；点击 `STOP` 可中断 Voice 和当前任务。
 
 Voice 暂时不可用时，可以使用底部文字输入框。语音和文字都会进入当前工作目录所
 对应的线程。
@@ -141,7 +156,7 @@ npm run dev
 JARVIS_WORKSPACE=/absolute/path npm run dev
 ```
 
-也可以在 Jarvis 设置面板中保存工作目录。
+也可以在设置面板中保存工作目录。
 
 ## 测试
 
@@ -180,7 +195,7 @@ Application 证书并完成 notarization，不应把 ad-hoc 构建描述为生�
 
 - 唤醒词强制使用本机语音识别。
 - 只有唤醒后，麦克风音频才进入 Codex Voice。
-- Jarvis 不保存原始音频和登录凭据。
+- 不保存原始音频和登录凭据。
 - WebView 使用限制性内容安全策略。
 - 自动办公模式限制在选定工作目录内。
 - 完全访问必须由用户主动选择。
@@ -190,9 +205,8 @@ Application 证书并完成 notarization，不应把 ad-hoc 构建描述为生�
 
 ## 开源许可证
 
-Jarvis Girlfriend 使用 [GNU General Public License v3.0](LICENSE) 开源。
-它基于 Big-Guan 的 [Jarvis × Codex](https://github.com/Big-Guan/jarvis-codex)
-项目，保留原始 GPL-3.0 许可证与署名。
+使用 [GNU General Public License v3.0](LICENSE) 开源，基于 Big-Guan 的开源语音
+Codex 项目构建，保留原始 GPL-3.0 许可证与署名。
 
 ## 参与贡献
 

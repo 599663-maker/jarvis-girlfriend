@@ -1,6 +1,6 @@
-# Contributing to Jarvis × Codex
+# Contributing to AI Girlfriend
 
-Thank you for helping improve Jarvis × Codex. Contributions of focused bug
+Thank you for helping improve AI Girlfriend. Contributions of focused bug
 fixes, compatibility updates, tests, documentation, and carefully scoped
 features are welcome.
 
