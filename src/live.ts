@@ -170,9 +170,16 @@ export class LiveCall {
   private speechTimer = 0;
   /** What the digital human was asked to say recently, for echo detection. */
   private readonly spokenLog: Array<{ text: string; at: number }> = [];
+  /** Lines sent as "朗读：…" while they are still in her mouth. */
+  private readonly sentLines: Array<{ text: string; at: number }> = [];
+  /** Debounces the interrupt that cuts off a self-started answer. */
+  private botInterruptTimer = 0;
+  /** A "朗读：…" line is expected to be on her lips until this moment. */
+  private readingUntil = 0;
   private static readonly SPEECH_CHARS_PER_SECOND = 4.5;
   private static readonly SPEECH_TAIL_MS = 800;
   private static readonly ECHO_WINDOW_MS = 90000;
+  private static readonly SENT_LINE_WINDOW_MS = 120000;
 
   constructor(canvas: HTMLCanvasElement, handlers: LiveHandlers) {
     this.canvas = canvas;
@@ -515,9 +522,36 @@ export class LiveCall {
         this.handlers.onUserText?.(text);
       } else {
         trace(`听写数字人：${brief}`);
+        this.noteBotSpeech(text);
         this.handlers.onBotText?.(text);
       }
     }
+  }
+
+  /**
+   * The digital human only ever speaks two ways: reading a "朗读：…" line the
+   * app sent, or answering on her own because the built-in LLM heard the room.
+   * Her own words re-enter through the microphone as user text, so both are
+   * logged for the echo filter — and a self-started answer is cut off the
+   * moment the transcription gives it away, before it can collide with the
+   * line the agent is about to hand over.
+   */
+  private noteBotSpeech(text: string) {
+    const bare = text.replace(/^朗读[:：]\s*/, "").trim();
+    if (!bare) return;
+    const now = Date.now();
+    while (this.sentLines.length > 0 && now - this.sentLines[0].at > LiveCall.SENT_LINE_WINDOW_MS) {
+      this.sentLines.shift();
+    }
+    const reading = this.sentLines.some((sent) => bare.includes(sent.text));
+    this.spokenLog.push({ text: bare, at: now });
+    while (this.spokenLog.length > 6) this.spokenLog.shift();
+    if (reading || now < this.readingUntil || this.stopping) return;
+    window.clearTimeout(this.botInterruptTimer);
+    this.botInterruptTimer = window.setTimeout(() => {
+      trace(`打断自发回答：${bare.length > 40 ? `${bare.slice(0, 40)}…` : bare}`);
+      this.interrupt();
+    }, 500);
   }
 
   /**
@@ -563,11 +597,14 @@ export class LiveCall {
         }),
       );
       this.spokenLog.push({ text: content, at: Date.now() });
-      while (this.spokenLog.length > 4) this.spokenLog.shift();
+      while (this.spokenLog.length > 6) this.spokenLog.shift();
+      this.sentLines.push({ text: content, at: Date.now() });
+      while (this.sentLines.length > 3) this.sentLines.shift();
       const seconds = Math.min(
         40,
         Math.max(1.8, content.length / LiveCall.SPEECH_CHARS_PER_SECOND + LiveCall.SPEECH_TAIL_MS / 1000),
       );
+      this.readingUntil = Date.now() + (seconds + 0.4) * 1000;
       this.speechTimer = window.setTimeout(send, seconds * 1000);
     };
     send();
@@ -774,6 +811,8 @@ export class LiveCall {
     this.setStage("ending", "正在挂断…");
     window.clearTimeout(this.speechTimer);
     this.speechTimer = 0;
+    window.clearTimeout(this.botInterruptTimer);
+    this.botInterruptTimer = 0;
     this.speechQueue.length = 0;
     window.clearTimeout(this.retryTimer);
     window.clearInterval(this.detectionTimer);

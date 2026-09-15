@@ -276,7 +276,10 @@ test("Jarvis never answers the echo of its own voice", () => {
   assert.match(wakeHelper, /if isWakeRemnant\(raw, remainder\) \{/);
   assert.match(wakeHelper, /if isSelfEcho\(remainder\) \{/);
   // A truncated wake phrase ("嗨贾维") must never be answered as a command.
-  assert.match(wakeHelper, /let tokens = \["jarvis", "贾维斯", "贾维", "维斯", "嗨", "嘿", "hi", "hey"\]/);
+  assert.match(wakeHelper, /wakeLeftover\(normalized\)\.count <= 1/);
+  // …but a real order behind a character name ("呼叫小肉肉") must be heard:
+  // once the name is taken out, no more than one character may remain.
+  assert.match(wakeHelper, /for token in \["jarvis", "贾维斯", "贾维", "维斯", "嗨", "嘿", "hi", "hey"\] \+ characterTokens \{/);
   assert.match(wakeHelper, /if hasWakePhrase\(raw\) \{\n\s+return wakeLeftover\(remainder\)\.count <= 2/);
   assert.match(wakeHelper, /private func wakeLeftover\(_ value: String\) -> String/);
   assert.match(wakeHelper, /recentSpoken\.append\(\(text: sentence, at: Date\(\)\)\)/);
@@ -1030,7 +1033,29 @@ test("the digital human carries Codex the orders and reads the answers back", ()
   assert.match(liveRust, /只负责「出镜」和「传话」/);
   assert.match(liveRust, /用户说出的每一句话都是发给智能体的指令，不是对你说话/);
   assert.match(liveRust, /绝不抢答/);
-  assert.match(liveRust, /"temperature": 0\.4/);
+  // The built-in LLM is squeezed to one short sentence, and the platform must
+  // not rewrite the "never speak first" persona behind our back.
+  assert.match(liveRust, /"temperature": 0\.2/);
+  assert.match(liveRust, /"max_tokens": 40/);
+  assert.match(liveRust, /"persona_enhance": false/);
+});
+
+test("a live call keeps the microphone and silences self-started answers", () => {
+  // The wake listener stays disarmed for the whole call: any "unmute" would
+  // open the input device mid-call and clip the digital human's voice.
+  assert.match(backend, /static LIVE_CALL_ACTIVE: AtomicBool = AtomicBool::new\(false\)/);
+  assert.match(backend, /&& !LIVE_CALL_ACTIVE\.load\(Ordering::SeqCst\)/);
+  assert.match(backend, /microphone stays with the live call: wake listener stays disarmed/);
+  assert.match(liveRust, /crate::set_live_call_active\(true\)/);
+  assert.match(liveRust, /bill as the very last step of hanging up/);
+  assert.match(liveRust, /crate::set_live_call_active\(false\);\n\s+result/);
+  assert.match(frontend, /await invoke\("videolive_end"\)\.catch\(\(\) => \{\}\);/);
+  // An answer the built-in LLM starts on its own is cut off as soon as the
+  // transcription gives it away, and her words join the echo log so they are
+  // never answered again when the microphone hears them back.
+  assert.match(liveSource, /private noteBotSpeech\(text: string\)/);
+  assert.match(liveSource, /打断自发回答/);
+  assert.match(liveSource, /this\.readingUntil = Date\.now\(\) \+ \(seconds \+ 0\.4\) \* 1000/);
 });
 
 test("the digital human arrives frame by frame instead of a green box", () => {
@@ -1185,6 +1210,7 @@ test("call orders dial the named character and nothing else", async () => {
     { id: "jarvis", name: "Jarvis" },
     { id: "zym", name: "张元英" },
     { id: "xm", name: "小美" },
+    { id: "xrr", name: "小肉肉" },
   ];
   assert.equal(matchCallCommand("呼叫张元英", cast), "zym");
   assert.equal(matchCallCommand("拨打张元英", cast), "zym");
@@ -1194,6 +1220,7 @@ test("call orders dial the named character and nothing else", async () => {
   assert.equal(matchCallCommand("叫张元英写一首诗", cast), null, "tasks stay tasks");
   assert.equal(matchCallCommand("帮我查一下呼叫记录里有多少条", cast), null);
   assert.equal(matchCallCommand("打开视频", cast), null, "that is the video switch");
+  assert.equal(matchCallCommand("呼叫小肉肉", cast), "xrr");
 });
 
 test("scene videos stand down for calls and transformations", () => {

@@ -2392,6 +2392,9 @@ async function endLiveCall(reason = "user_end", announce = true) {
   // not be left looking at a "挂断中" chip afterwards.
   updateLiveChip("idle");
   if (call) await call.stop(reason).catch(() => null);
+  // The call has left the room: the wake listener may take the microphone
+  // back. Cleared before re-arming so the drain watcher stops holding it.
+  await invoke("videolive_end").catch(() => {});
   const canvas = $("#live-character") as HTMLCanvasElement;
   canvas.hidden = true;
   characterImage.hidden = false;

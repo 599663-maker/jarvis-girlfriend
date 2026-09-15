@@ -286,9 +286,12 @@ impl CodexRuntime {
                             *runtime.active_turn.write().await = None;
                             // Hand the microphone back to the wake listener when
                             // nothing is being read aloud, so a silent turn
-                            // cannot freeze the conversation.
+                            // cannot freeze the conversation. Never while a
+                            // live call owns the microphone: the listener
+                            // would open the device mid-call and clip her.
                             if !SPEAK_ACTIVE.load(Ordering::SeqCst)
                                 && SPEAK_PENDING.load(Ordering::SeqCst) == 0
+                                && !LIVE_CALL_ACTIVE.load(Ordering::SeqCst)
                             {
                                 let app = event_app.clone();
                                 tauri::async_runtime::spawn(async move {
@@ -1361,6 +1364,13 @@ static SPEAK_TURN_OPEN: AtomicBool = AtomicBool::new(false);
 static SPEAK_RESUMING: AtomicBool = AtomicBool::new(false);
 static TURN_SEQ: AtomicU64 = AtomicU64::new(0);
 static TURN_SPOKEN: AtomicBool = AtomicBool::new(false);
+/// A Vidu realtime call owns the microphone through WebRTC: while it is up,
+/// the wake listener must stay disarmed, no matter which speech turn ends.
+static LIVE_CALL_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn set_live_call_active(active: bool) {
+    LIVE_CALL_ACTIVE.store(active, Ordering::SeqCst);
+}
 
 struct VoicePack {
     id: &'static str,
@@ -1927,6 +1937,10 @@ async fn play_wav(
 /// syllable of the answer, and long after the last word, so the listener never
 /// transcribes Jarvis's own voice.
 fn resume_listening_when_idle(app: &AppHandle) {
+    if LIVE_CALL_ACTIVE.load(Ordering::SeqCst) {
+        speak_log("microphone stays with the live call: wake listener stays disarmed");
+        return;
+    }
     if SPEAK_RESUMING.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -1957,7 +1971,7 @@ fn resume_listening_when_idle(app: &AppHandle) {
                 let _ = queue.send(AudioRequest::Pad { millis: 700 });
             }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            if idle() {
+            if idle() && !LIVE_CALL_ACTIVE.load(Ordering::SeqCst) {
                 speak_log("microphone back: answer drained");
                 write_wake_control(&app, "unmute").await;
                 break;
@@ -2625,6 +2639,7 @@ pub fn run() {
             avatars::create_avatar_from_image,
             avatars::set_avatar_live_voice,
             live::videolive_start,
+            live::videolive_end,
             live::videolive_prepare,
             live::videolive_billing,
             live::videolive_voices,

@@ -648,10 +648,12 @@ final class WakeListener {
         // "嗨贾维": the recogniser splits the phrase while it is still being
         // spoken, and the piece it keeps would otherwise be answered as a real
         // command — which then talks over the instruction the user says next.
+        // A bare character name ("小肉肉", "嗨小肉肉") is the tail of its wake
+        // phrase, but a name behind a real verb ("呼叫小肉肉") is an order and
+        // must be answered: once the name is taken out, no word may remain.
         let normalized = normalize(raw)
         guard normalized.count <= 6 else { return false }
-        let tokens = ["jarvis", "贾维斯", "贾维", "维斯", "嗨", "嘿", "hi", "hey"] + characterTokens
-        return tokens.contains { normalized.contains($0) }
+        return wakeLeftover(normalized).count <= 1
     }
 
     /// What is left of a transcript once every wake word is taken out of it.

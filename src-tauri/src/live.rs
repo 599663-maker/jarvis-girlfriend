@@ -177,6 +177,7 @@ fn create_body(avatar: &Avatar, asset_id: &str, image_uri: Option<String>) -> Va
         "voice": live_voice(avatar),
         "greeting_instruction": greeting_instruction(avatar),
         "idle_action": true,
+        "persona_enhance": false,
     });
     if !asset_id.is_empty() {
         avatar_payload["id"] = json!(asset_id);
@@ -197,11 +198,18 @@ fn create_body(avatar: &Avatar, asset_id: &str, image_uri: Option<String>) -> Va
             "silence_duration_ms": 800,
             "idle_timeout_ms": 0
         },
+        // The S1 model always hears the room, but the app is the only writer:
+        // every spoken line arrives as a "朗读：…" text. The built-in LLM is
+        // therefore squeezed to one short, repetitive sentence, so an answer
+        // it makes on its own stays short enough to be cut off instantly and
+        // never talks over the agent's line.
         "llm": {
-            "temperature": 0.4,
-            "top_p": 0.8,
-            "max_tokens": 220,
-            "frequency_penalty": 1
+            "temperature": 0.2,
+            "top_p": 0.6,
+            "top_k": 10,
+            "max_tokens": 40,
+            "frequency_penalty": 1.6,
+            "presence_penalty": 0
         },
         "idle_timeout_seconds": IDLE_TIMEOUT_SECONDS
     })
@@ -246,6 +254,7 @@ pub async fn videolive_start(avatar_id: Option<String>) -> Result<Value, String>
     if live_id.is_empty() {
         return Err(format!("Vidu 未返回会话 ID：{created}"));
     }
+    crate::set_live_call_active(true);
     if let Some(asset) = created.pointer("/live/avatar/id").and_then(Value::as_str) {
         if !asset.is_empty() {
             let _ = avatars::set_live_asset_id(&avatar.id, asset);
@@ -263,6 +272,14 @@ pub async fn videolive_start(avatar_id: Option<String>) -> Result<Value, String>
         "creditsPerSecond": CREDITS_PER_SECOND,
         "model": "Vidu S1 实时数字人"
     }))
+}
+
+/// Ends the "live call owns the microphone" state so the wake listener can
+/// take the device back. Called after the webview has torn the call down.
+#[tauri::command]
+pub fn videolive_end() -> Value {
+    crate::set_live_call_active(false);
+    json!({"ok": true})
 }
 
 async fn ensure_asset_key(key: &str, avatar: &Avatar) -> Result<String, String> {
@@ -290,12 +307,17 @@ async fn ensure_asset_key(key: &str, avatar: &Avatar) -> Result<String, String> 
 #[tauri::command]
 pub async fn videolive_billing(live_id: String) -> Result<Value, String> {
     let key = avatars::vidu_key().ok_or_else(|| "还没有配置 Vidu API Key。".to_owned())?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let client = ViduClient::new(key);
         client.live_status(&live_id)
     })
     .await
-    .map_err(|error| format!("查询通话账单异常：{error}"))?
+    .map_err(|error| format!("查询通话账单异常：{error}"))?;
+    // The webview queries the bill as the very last step of hanging up, so a
+    // live call can no longer be running once the answer is back. This is the
+    // second release for the microphone guard, after the explicit `end`.
+    crate::set_live_call_active(false);
+    result
 }
 
 /// Pre-uploads a portrait so the next conversation starts without the wait.
