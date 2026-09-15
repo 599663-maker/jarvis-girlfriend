@@ -93,5 +93,18 @@ export function matchCallCommand(text: string, avatars: AvatarName[]): string | 
     if (rest.length > budget) return null;
     return avatar.id;
   }
-  return null;
+  // On-device recognition can finalize the sentence a syllable early, so
+  // "呼叫小肉" arrives for 小肉肉 and the last character lands in a later,
+  // separate transcript. A call verb plus an unambiguous prefix of exactly
+  // one character name is the same order; anything longer stays a task.
+  let target = normalized;
+  for (const word of [...CALL_VERBS, ...CALL_HINTS]) target = target.split(word).join("");
+  target = target.replace(/^(给|和|跟|帮我|请|快|喂)/, "");
+  if (target.length < 2) return null;
+  const prefixCandidates = candidates.filter((avatar) => {
+    const keys = [avatar.name.trim().toLowerCase()];
+    if (avatar.id === "jarvis") keys.push(...BUILTIN_ALIASES);
+    return keys.some((key) => key.startsWith(target));
+  });
+  return prefixCandidates.length === 1 ? prefixCandidates[0].id : null;
 }

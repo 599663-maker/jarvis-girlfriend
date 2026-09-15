@@ -10,7 +10,13 @@
 // the character on the HUD instead of inside a video rectangle.
 
 import { invoke } from "@tauri-apps/api/core";
-import { createVideoKeyer, readBackdropClearance, type KeySample, type VideoKeyer } from "./chroma";
+import {
+  createVideoKeyer,
+  readBackdropClearance,
+  type KeyColor,
+  type KeySample,
+  type VideoKeyer,
+} from "./chroma";
 
 export type LiveStage =
   | "idle"
@@ -99,6 +105,16 @@ function describe(error: unknown): string {
   }
 }
 
+/** Whether two key samples describe the same studio backdrop. */
+function keyColorClose(a: KeyColor, b: KeyColor | null): boolean {
+  if (!b) return false;
+  return (
+    Math.abs(a.r - b.r) < 20 &&
+    Math.abs(a.g - b.g) < 20 &&
+    Math.abs(a.b - b.b) < 20
+  );
+}
+
 function rtcEnum(group: string, key: string, fallback: number): number {
   const namespace = (window as any).AliRtcEngine ?? {};
   const engine = namespace.default ?? namespace.AliRtcEngine ?? namespace;
@@ -153,6 +169,8 @@ export class LiveCall {
   private lastRevealCheck = 0;
   /** The keyed backdrop drifted and the frame is waiting for a fresh sample. */
   private keyStale = false;
+  /** Consecutive low-clearance readings; one dip re-samples, two blank. */
+  private driftChecks = 0;
   private probe: HTMLCanvasElement | null = null;
   private opened = false;
   private localOptions: { publishCamera?: boolean } = {};
@@ -230,6 +248,7 @@ export class LiveCall {
     this.revealChecks = 0;
     this.lastRevealCheck = 0;
     this.keyStale = false;
+    this.driftChecks = 0;
     this.opened = false;
     this.mediaUsers.clear();
     this.subState.clear();
@@ -706,7 +725,7 @@ export class LiveCall {
       probe.height = 90;
       this.probe = probe;
     }
-    const limit = this.revealed ? 2000 : 400;
+    const limit = this.revealed ? 800 : 400;
     if (now - this.lastRevealCheck < limit) return;
     this.lastRevealCheck = now;
     const clearance = readBackdropClearance(
@@ -732,15 +751,42 @@ export class LiveCall {
       return;
     }
     if (clearance < 0.85) {
-      // The set drifted or switched: blank the frame immediately instead of
+      // A raised hand, a step toward the edge or the model settling on a
+      // slightly different set all dip the border reading while she speaks:
+      // while a "朗读：…" line is still on her lips the picture stays, because
+      // blanking it there made her sentences look like they were cut off.
+      if (now < this.readingUntil) return;
+      this.driftChecks += 1;
+      // Low edge coverage alone is not drift: a waving hand or a step toward
+      // the edge can cover the sampled border while the backdrop itself stays
+      // exactly the same. Only a backdrop that actually changed colour — or a
+      // frame with no usable sample that persists for two checks — stands the
+      // picture down.
+      const previousKey = this.keyer.key();
+      const sample = this.keyer.detect(this.video);
+      if (sample && keyColorClose(sample.color, previousKey)) {
+        this.keyStale = false;
+        this.driftChecks = 0;
+        return;
+      }
+      if (this.driftChecks < 2) {
+        // The fresh sample is already adopted; one more bad reading and the
+        // still takes the stage.
+        this.keyStale = true;
+        return;
+      }
+      // The set really did drift or switch: blank the frame instead of
       // letting the wrong backdrop through, then re-sample so the picture can
       // come back without a redial.
       this.revealed = false;
+      this.driftChecks = 0;
       this.keyer.setKey(null);
       this.keyStale = true;
       trace(`数字人背景漂移（边缘透明 ${(clearance * 100).toFixed(0)}%），画面暂回立绘并重新采样`);
       this.handlers.onVideoLost?.();
+      return;
     }
+    this.driftChecks = 0;
   }
 
   private startRenderLoop() {

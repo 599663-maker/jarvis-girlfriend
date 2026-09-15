@@ -1258,6 +1258,9 @@ if (currentWindow) {
         }
       }
       if (!response.textContent) response.textContent = "我在，请说指令…（也可以直接打字）";
+      // The wake is answered out loud too — once. A cold replay has already
+      // handed the line to the greeting wave, so only warm wakes speak here.
+      if (!named && payload.cold !== true) speakWakeGreeting();
       ($("#command-input") as HTMLInputElement).focus();
       return;
     }
@@ -1603,6 +1606,23 @@ function updateScenePlayback() {
   }
   scenePlayer.setVisible(scene !== "static");
   scenePlayer.playScene(scene);
+}
+
+/** One voice per wake: the greeting wave owns the first line of the session,
+ * later wakes reuse the pre-rendered wake greeting. A single source keeps
+ * "主人，小肉肉来了" from being said twice for the same summon. */
+function speakWakeGreeting() {
+  if (!speakReplies) return;
+  const greeting = avatars.find((item) => item.id === activeAvatar)?.greeting?.trim();
+  if (!greeting) return;
+  // The first visible screen still has its greeting pending: that scene speaks
+  // the line together with the wave (now, or the moment the window appears),
+  // so a second voice here would double it.
+  if (!greetPlayed && !greetSpoken && sceneSources.greet) {
+    updateScenePlayback();
+    return;
+  }
+  void invoke("wake_greeting").catch(() => {});
 }
 
 /** Loads the active character's scene videos and lets the right one take the stage. */
@@ -2257,7 +2277,10 @@ function setupCallChip() {
   chip.addEventListener("click", (event) => event.stopPropagation());
   start.addEventListener("click", () => {
     showCallChip(false);
-    void dialCharacter(activeAvatar);
+    // The app owns every greeting now: Vidu's own opening line was removed
+    // from the session body, so the button dial greets through the same
+    // "朗读：…" path as a spoken "呼叫小肉肉".
+    void dialCharacter(activeAvatar, true);
   });
   document.addEventListener("click", () => showCallChip(false));
   document.addEventListener("keydown", (event) => {
@@ -2406,8 +2429,16 @@ async function endLiveCall(reason = "user_end", announce = true) {
   updateScenePlayback();
   pendingLiveGreeting = "";
   // A spoken "挂断" while the official voice session still owns the
-  // microphone must not hand it back to the wake listener.
+  // microphone must not hand it back to the wake listener. The JS copy of the
+  // voice state can be stale after the call stood the session down, so read
+  // the Rust side before deciding who gets the microphone back.
+  const voiceInfo = await invoke<DirectVoice>("direct_voice_status").catch(() => state.directVoice);
+  if (voiceInfo) updateVoiceInfo(voiceInfo);
   if (!state.directVoice?.voiceActive && !peer) {
+    // AliRTC releases the input device asynchronously; arming in the same
+    // tick used to leave the listener deaf and the character answering no
+    // voice orders until a relaunch.
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 600));
     await armWakeListener().catch(() => {});
   }
   if (announce) setMode("ready");
@@ -2848,7 +2879,10 @@ if (currentWindow) {
         // A cold wake means Jarvis was not running: the sentence that woke it
         // could not be executed, so greet the master and invite the order —
         // with the microphone open, so it is not swallowed by the greeting.
-        void invoke("wake_greeting");
+        // The window opened for this very wake, so the greeting wave has
+        // usually just said the line: only speak when it had no wave to say
+        // it with, which keeps the hello from being said twice.
+        if (!greetSpoken && !greetPlayed) speakWakeGreeting();
       }
     }
   } catch (error) { setMode("stopped"); response.textContent = `启动失败：${String(error)}`; }

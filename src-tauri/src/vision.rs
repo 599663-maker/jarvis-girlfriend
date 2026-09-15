@@ -111,26 +111,133 @@ pub fn status() -> Value {
     })
 }
 
-/// Latest known expression, phrased for the model prompt.
+/// Latest known expression and scene labels, phrased for the model prompt.
 pub fn mood_hint() -> Option<String> {
     let guard = signal_store().lock().ok()?;
     let faces = guard.get("faces").and_then(Value::as_i64).unwrap_or(0);
-    if faces <= 0 {
+    let mut parts: Vec<String> = Vec::new();
+    if faces > 0 {
+        let emotion = guard
+            .get("emotion")
+            .and_then(Value::as_str)
+            .unwrap_or("neutral");
+        let zh = match emotion {
+            "happy" => "主人正带着微笑，心情不错",
+            "surprised" => "主人看起来有点惊讶",
+            "sad" => "主人看起来情绪低落",
+            "angry" => "主人皱着眉，似乎有点不满",
+            "tired" => "主人看起来有些疲惫",
+            _ => "主人表情平静",
+        };
+        parts.push(format!("摄像头看到{zh}"));
+    }
+    // Vision names the scene with ImageNet labels ("cell phone", "book").
+    // The common things a master holds up get Chinese names; anything else is
+    // passed through untouched so no information is lost.
+    let mut named: Vec<String> = Vec::new();
+    for object in guard
+        .get("objects")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+    {
+        let label = object
+            .get("label")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let confidence = object
+            .get("confidence")
+            .and_then(Value::as_f64)
+            .unwrap_or_default();
+        if label.is_empty() || confidence < 0.25 {
+            continue;
+        }
+        // Scene-level labels from the whole-image classifier describe the
+        // room, not what the master is holding: naming "people, adult,
+        // furniture" as a held object would make the hint useless.
+        let generic = [
+            "people",
+            "person",
+            "adult",
+            "child",
+            "man",
+            "woman",
+            "boy",
+            "girl",
+            "face",
+            "head",
+            "hair",
+            "hand",
+            "body",
+            "structure",
+            "furniture",
+            "cabinet",
+            "cupboard",
+            "wardrobe",
+            "wood",
+            "room",
+            "indoor",
+            "wall",
+            "floor",
+            "ceiling",
+            "door",
+            "window",
+            "table",
+            "chair",
+            "desk",
+            "lamp",
+            "light",
+            "curtain",
+            "carpet",
+            "rug",
+            "shelf",
+            "bed",
+            "couch",
+            "sofa",
+            "seat",
+            "bench",
+            "dresser",
+            "countertop",
+        ];
+        if generic
+            .iter()
+            .any(|word| label == *word || label.contains(word))
+        {
+            continue;
+        }
+        let zh_name = match () {
+            _ if label.contains("phone") => Some("手机"),
+            _ if label.contains("book") => Some("书"),
+            _ if label.contains("laptop") || label.contains("notebook computer") => {
+                Some("笔记本电脑")
+            }
+            _ if label.contains("mug") || label.contains("cup") => Some("杯子"),
+            _ if label.contains("glasses") || label.contains("spectacles") => Some("眼镜"),
+            _ if label.contains("bottle") => Some("水瓶"),
+            _ if label.contains("banana") => Some("香蕉"),
+            _ if label.contains("apple") => Some("苹果"),
+            _ if label.contains("remote") => Some("遥控器"),
+            _ if label.contains("keyboard") => Some("键盘"),
+            _ if label.contains("mouse") => Some("鼠标"),
+            _ if label.contains("ballpoint") || label.contains(" pen") => Some("笔"),
+            _ if label.contains("camera") => Some("相机"),
+            _ => None,
+        };
+        let name = zh_name.unwrap_or(label).to_owned();
+        if !named.contains(&name) {
+            named.push(name);
+        }
+        if named.len() >= 3 {
+            break;
+        }
+    }
+    if !named.is_empty() {
+        parts.push(format!("主人面前或手里可能拿着：{}", named.join("、")));
+    }
+    if parts.is_empty() {
         return None;
     }
-    let emotion = guard
-        .get("emotion")
-        .and_then(Value::as_str)
-        .unwrap_or("neutral");
-    let zh = match emotion {
-        "happy" => "主人正带着微笑，心情不错",
-        "surprised" => "主人看起来有点惊讶",
-        "sad" => "主人看起来情绪低落",
-        "angry" => "主人皱着眉，似乎有点不满",
-        "tired" => "主人看起来有些疲惫",
-        _ => "主人表情平静",
-    };
-    Some(format!("摄像头看到{zh}。"))
+    Some(format!("{}。", parts.join("，")))
 }
 
 #[tauri::command]
@@ -288,6 +395,7 @@ pub fn start(app: AppHandle) {
                                     "faces",
                                     "emotion",
                                     "confidence",
+                                    "objects",
                                     "smile",
                                     "eyes",
                                     "mouth",

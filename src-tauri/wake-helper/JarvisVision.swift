@@ -4,7 +4,9 @@
 //   * a small JPEG (--frame-file) that the HUD renders as the self view, so the
 //     master can see themselves in front of the computer;
 //   * one JSON line per analysis (--event-file) with face count, coarse
-//     expression estimate and the raw geometry it was derived from.
+//     expression estimate, the raw geometry it was derived from, and — every
+//     other analysis — the scene labels Vision can name, so Jarvis can also
+//     react to what the master is holding up to the camera.
 //
 // The expression estimate is deliberately explainable: Vision gives face
 // landmarks, and the scores below are plain ratios (mouth corner lift, mouth
@@ -176,6 +178,7 @@ final class VisionPipeline: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
     private var lastFrameAt = Date.distantPast
     private var analysisInFlight = false
     private var lastAnalysisAt = Date.distantPast
+    private var analysisCount = 0
     private var loggedFrame = false
 
     init(options: Options) {
@@ -216,28 +219,76 @@ final class VisionPipeline: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         analysisInFlight = true
         analysisQueue.async { [weak self] in
             guard let self else { return }
-            let event = self.analyse(jpeg: jpeg)
+            // Classification runs every other analysis: objects change slowly
+            // compared to expressions, and this keeps the capture pipeline
+            // from burning CPU naming the same desk forty times a minute.
+            self.analysisCount += 1
+            let event = self.analyse(jpeg: jpeg, classify: self.analysisCount.isMultiple(of: 2))
             self.writer.send(event)
             self.analysisInFlight = false
         }
     }
 
-    private func analyse(jpeg: Data) -> [String: Any] {
-        let request = VNDetectFaceLandmarksRequest()
-        let handler = VNImageRequestHandler(data: jpeg, orientation: .up, options: [:])
+    private func analyse(jpeg: Data, classify: Bool) -> [String: Any] {
+        let faceRequest = VNDetectFaceLandmarksRequest()
+        let rectRequest = VNDetectFaceRectanglesRequest()
+        let classifyRequest = classify ? VNClassifyImageRequest() : nil
+        var requests: [VNRequest] = [faceRequest, rectRequest]
+        if let classifyRequest {
+            requests.append(classifyRequest)
+        }
+        // A backlit face can sit a stop under the bright window behind it and
+        // vanish for the detector even though it is plainly there. Analysis
+        // frames get a small exposure lift first; the preview the master sees
+        // stays untouched.
+        let analysisData: Data
+        if let input = CIImage(data: jpeg) {
+            let boosted = CIFilter(
+                name: "CIExposureAdjust",
+                parameters: [kCIInputImageKey: input, kCIInputEVKey: 0.6]
+            )?.outputImage
+            let contrast = CIFilter(
+                name: "CIColorControls",
+                parameters: [kCIInputImageKey: boosted ?? input, kCIInputContrastKey: 1.05]
+            )?.outputImage
+            if let prepared = contrast ?? boosted,
+               let reencoded = context.jpegRepresentation(
+                   of: prepared,
+                   colorSpace: CGColorSpaceCreateDeviceRGB(),
+                   options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.6]
+               ) {
+                analysisData = reencoded
+            } else {
+                analysisData = jpeg
+            }
+        } else {
+            analysisData = jpeg
+        }
+        let handler = VNImageRequestHandler(data: analysisData, orientation: .up, options: [:])
         do {
-            try handler.perform([request])
+            try handler.perform(requests)
         } catch {
             return ["type": "face", "faces": 0, "emotion": "unknown", "error": error.localizedDescription]
         }
-        let observations = (request.results ?? []).sorted { $0.boundingBox.width > $1.boundingBox.width }
+        let observations = (faceRequest.results ?? []).sorted { $0.boundingBox.width > $1.boundingBox.width }
+        let rectangleFaces = rectRequest.results?.count ?? 0
+        var objects: [[String: Any]] = []
+        if let classifyRequest {
+            objects = (classifyRequest.results ?? []).prefix(6).map { observation in
+                ["label": observation.identifier, "confidence": observation.confidence]
+            }
+        }
         guard let face = observations.first else {
-            return ["type": "face", "faces": 0, "emotion": "unknown", "ts": Date().timeIntervalSince1970]
+            // Landmarks need a clear view; rectangles are the fallback for a
+            // face in shadow. Presence without landmarks still counts as seen.
+            var event: [String: Any] = ["type": "face", "faces": rectangleFaces, "emotion": "unknown", "ts": Date().timeIntervalSince1970]
+            if !objects.isEmpty { event["objects"] = objects }
+            return event
         }
         let expression = ExpressionReader.read(face)
         var event: [String: Any] = [
             "type": "face",
-            "faces": observations.count,
+            "faces": max(observations.count, rectangleFaces),
             "emotion": expression.label,
             "confidence": expression.confidence,
             "distance": Double(face.boundingBox.width),
@@ -245,6 +296,7 @@ final class VisionPipeline: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             "pitch": Double(face.pitch?.doubleValue ?? 0),
             "ts": Date().timeIntervalSince1970,
         ]
+        if !objects.isEmpty { event["objects"] = objects }
         for (key, value) in expression.metrics { event[key] = value }
         return event
     }

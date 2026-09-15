@@ -630,17 +630,7 @@ fn start_wake_supervisor(app: AppHandle) {
                                 if let Some(name) = message.get("name").and_then(Value::as_str) {
                                     wake["name"] = json!(name);
                                 }
-                                // A named wake ("嗨张元英") is answered by that
-                                // character in her own voice once the line is
-                                // up, so the local greeting stays out of the way.
-                                let named = wake.get("avatar").and_then(Value::as_str).is_some();
                                 let _ = app.emit("jarvis-wake", wake);
-                                if conversation && !named {
-                                    let greeting = app.clone();
-                                    tauri::async_runtime::spawn(async move {
-                                        greet_on_wake(&greeting).await;
-                                    });
-                                }
                             } else {
                                 woke = true;
                                 state.wake_enabled.store(false, Ordering::SeqCst);
@@ -2036,37 +2026,6 @@ async fn prewarm_greeting(pack: &VoicePack) {
     speak_log(&format!("greeting ready pack={}", pack.id));
 }
 
-/// Says hello after the wake word. The answer of the sentence that follows the
-/// wake phrase takes priority: it stops this greeting through the same
-/// barge-in path as any other reply.
-async fn greet_on_wake(app: &AppHandle) {
-    if !speak_replies() {
-        return;
-    }
-    let pack = active_voice_pack();
-    let path = greeting_file(pack);
-    if !path.exists() {
-        prewarm_greeting(pack).await;
-    }
-    if !path.exists() {
-        return;
-    }
-    speak_log(&format!(
-        "wake greeting avatar={} pack={}",
-        avatars::active_avatar().id,
-        pack.id
-    ));
-    let _ = play_wav(
-        app,
-        pack,
-        &avatars::greeting_text(),
-        &path,
-        SPEAK_GENERATION.load(Ordering::SeqCst),
-        false,
-    )
-    .await;
-}
-
 /// One cached "I am listening" sound per voice pack, so the first reply of a
 /// turn starts instantly instead of waiting for the text to speech round trip.
 fn backchannel_phrase() -> &'static str {
@@ -2175,12 +2134,37 @@ async fn speak(app: AppHandle, text: String) -> Result<(), String> {
     speak_with(&app, active_voice_pack(), &text).await
 }
 
-/// The cold wake says the same hello as the warm one: the master summoned
-/// Jarvis and should hear it, not only see the window appear.
+/// Says hello after a wake, from the pre-rendered greeting so the answer is
+/// instant. The front-end is the only caller and keeps it single-sourced: the
+/// greeting wave owns the first line of a session, every later wake uses this
+/// command, and the two can never play at once.
 #[tauri::command]
 async fn wake_greeting(app: AppHandle) -> Result<(), String> {
-    greet_on_wake(&app).await;
-    Ok(())
+    if !speak_replies() {
+        return Ok(());
+    }
+    let pack = active_voice_pack();
+    let path = greeting_file(pack);
+    if !path.exists() {
+        prewarm_greeting(pack).await;
+    }
+    if !path.exists() {
+        return Ok(());
+    }
+    speak_log(&format!(
+        "wake greeting avatar={} pack={}",
+        avatars::active_avatar().id,
+        pack.id
+    ));
+    play_wav(
+        &app,
+        pack,
+        &avatars::greeting_text(),
+        &path,
+        SPEAK_GENERATION.load(Ordering::SeqCst),
+        false,
+    )
+    .await
 }
 
 #[tauri::command]

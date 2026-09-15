@@ -81,23 +81,6 @@ pub fn live_persona(avatar: &Avatar) -> String {
     )
 }
 
-pub fn greeting_instruction(avatar: &Avatar) -> String {
-    let greeting = if avatar.greeting.trim().is_empty() {
-        format!("{}在此，主人请吩咐！", avatar.name)
-    } else {
-        avatar.greeting.trim().to_owned()
-    };
-    let prefix = "请直接用中文说这句开场白，不要添加任何别的内容：";
-    let mut text = format!("{prefix}“{greeting}”");
-    if text.chars().count() > 200 {
-        text = format!(
-            "{prefix}“{}”",
-            greeting.chars().take(160).collect::<String>()
-        );
-    }
-    text
-}
-
 /// The chroma-key twin of a portrait, when the matting tool produced one.
 pub fn green_portrait(avatar: &Avatar) -> Option<PathBuf> {
     if avatar.image_file.is_empty() {
@@ -124,14 +107,20 @@ fn portrait_path(avatar: &Avatar) -> Option<PathBuf> {
 /// the still portrait in the meantime.
 pub fn scene_video_path(avatar: &Avatar, scene: &str) -> Option<PathBuf> {
     let file = match scene {
-        "greet" => &avatar.greet_video_file,
-        "wait" => &avatar.wait_video_file,
+        "greet" => avatar.greet_video_file.as_str(),
+        "wait" => avatar.wait_video_file.as_str(),
         _ => return None,
     };
-    if file.is_empty() {
-        return None;
-    }
-    let path = avatars::portraits_dir().ok()?.join(file);
+    let directory = avatars::portraits_dir().ok()?;
+    // Renders that finished while the store write failed (or that predate the
+    // fields) still live on disk under the same name `generate_scene_video`
+    // writes: `{id}-{scene}.mp4`. Deriving the name keeps those files usable
+    // instead of silently regenerating them.
+    let path = if !file.is_empty() {
+        directory.join(file)
+    } else {
+        directory.join(format!("{}-{}.mp4", avatar.id, scene))
+    };
     path.is_file().then_some(path)
 }
 
@@ -175,7 +164,6 @@ fn create_body(avatar: &Avatar, asset_id: &str, image_uri: Option<String>) -> Va
     let mut avatar_payload = json!({
         "persona": live_persona(avatar),
         "voice": live_voice(avatar),
-        "greeting_instruction": greeting_instruction(avatar),
         "idle_action": true,
         "persona_enhance": false,
     });
@@ -369,14 +357,6 @@ mod tests {
         let persona = live_persona(&avatars::builtin_avatar());
         assert!(persona.contains("钢铁侠式智能管家"));
         assert!(persona.contains("朗读："));
-    }
-
-    #[test]
-    fn greeting_instruction_stays_inside_the_200_character_limit() {
-        let mut avatar = avatars::builtin_avatar();
-        assert!(greeting_instruction(&avatar).chars().count() <= 200);
-        avatar.greeting = "好".repeat(500);
-        assert!(greeting_instruction(&avatar).chars().count() <= 200);
     }
 
     #[test]

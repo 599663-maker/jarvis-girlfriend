@@ -383,8 +383,11 @@ test("DeepSeek text mode never reaches for the official Voice", () => {
   assert.match(frontend, /await invoke<boolean>\("consume_cold_wake"\)[\s\S]{0,400}await armWakeListener\(\);/);
   assert.match(backend, /if voice_text_only\(\) \{\n\s+\/\/ The helper that launched this window is the only thing listening/);
   assert.match(backend, /raise_jarvis_window\(&app\);\n\s+start_wake_supervisor\(app\.clone\(\)\);/);
-  // The cold wake greets out loud too, with the microphone open.
-  assert.match(frontend, /void invoke\("wake_greeting"\);/);
+  // The cold wake greets out loud too, with the microphone open — through the
+  // one greeting source every wake shares.
+  assert.match(frontend, /function speakWakeGreeting\(\)/);
+  assert.match(frontend, /if \(!greetSpoken && !greetPlayed\) speakWakeGreeting\(\);/);
+  assert.match(frontend, /void invoke\("wake_greeting"\)\.catch/);
 });
 
 test("a keeper re-opens Jarvis so the microphone never goes deaf", () => {
@@ -729,15 +732,13 @@ test("the wake word is answered out loud", () => {
   assert.match(backend, /greeting ready pack=/);
   // The greeting plays with the microphone open: the order that follows the
   // wake word is usually spoken immediately and would otherwise be swallowed.
-  assert.match(backend, /let _ = play_wav\(\n\s+app,\n\s+pack,\n\s+&avatars::greeting_text\(\),\n\s+&path,\n\s+SPEAK_GENERATION\.load\(Ordering::SeqCst\),\n\s+false,\n\s+\)\n\s+\.await;/);
+  assert.match(backend, /async fn wake_greeting\(app: AppHandle\) -> Result<\(\), String> \{[\s\S]{0,500}play_wav\([\s\S]{0,300}false,[\s\S]{0,120}\)\n\s+\.await/);
   assert.match(backend, /if hold_microphone \{\n\s+write_wake_control\(app, "mute"\)\.await;/);
-  assert.ok(
-    backend.indexOf('Some("wake") =>') < backend.indexOf("greet_on_wake(&greeting).await"),
-    "the greeting hangs off the wake event",
-  );
-  // A cold wake says the same hello instead of asking for a repetition.
-  assert.match(backend, /async fn wake_greeting\(app: AppHandle\) -> Result<\(\), String> \{/);
-  assert.match(frontend, /void invoke\("wake_greeting"\);/);
+  // One voice per summon: the supervisor no longer greets on its own, the
+  // front-end is the single source, and the greeting wave owns the first line.
+  assert.doesNotMatch(backend, /greet_on_wake/);
+  assert.match(frontend, /function speakWakeGreeting\(\)[\s\S]{0,700}void invoke\("wake_greeting"\)\.catch/);
+  assert.match(frontend, /if \(!greetPlayed && !greetSpoken && sceneSources\.greet\)/);
   assert.ok(
     !frontend.includes("我回来了，你再说一次。"),
     "the cold wake greets the master",
@@ -1221,6 +1222,11 @@ test("call orders dial the named character and nothing else", async () => {
   assert.equal(matchCallCommand("帮我查一下呼叫记录里有多少条", cast), null);
   assert.equal(matchCallCommand("打开视频", cast), null, "that is the video switch");
   assert.equal(matchCallCommand("呼叫小肉肉", cast), "xrr");
+  // On-device recognition can settle one syllable early: the same order must
+  // still dial when the transcript arrives as "呼叫小肉".
+  assert.equal(matchCallCommand("呼叫小肉", cast), "xrr", "a syllable-late transcript still dials");
+  assert.equal(matchCallCommand("叫张", cast), null, "one character is not a name");
+  assert.equal(matchCallCommand("呼叫小", cast), null, "one character is not a name");
 });
 
 test("scene videos stand down for calls and transformations", () => {

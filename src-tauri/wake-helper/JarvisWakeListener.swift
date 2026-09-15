@@ -639,6 +639,17 @@ final class WakeListener {
     /// piece it keeps would otherwise be answered as a real command — which
     /// then talks over the instruction the user says next.
     private func isWakeRemnant(_ raw: String, _ remainder: String) -> Bool {
+        // A verb that names a real order ("呼叫小肉肉", "打开视频") is never
+        // the tail of a wake phrase, no matter how few characters the name
+        // behind it has. Dropping these is what made the master dial the
+        // local character instead of Vidu.
+        let compact = normalize(remainder)
+        for verb in [
+            "呼叫", "拨打", "拨通", "打给", "接通", "连线", "打电话", "视频电话",
+            "打开视频", "开视频", "启动视频", "视频通话", "视频对话",
+        ] where compact.contains(verb) {
+            return false
+        }
         // "嗨贾维斯现": the wake phrase is still on the transcript, so a couple
         // of characters behind it can still be the phrase breaking apart.
         // Anything longer is the command, even while it is still growing.
