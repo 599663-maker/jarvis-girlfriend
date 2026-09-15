@@ -1036,15 +1036,16 @@ test("the digital human carries Codex the orders and reads the answers back", ()
   assert.match(liveRust, /只负责「出镜」和「传话」/);
   assert.match(liveRust, /用户说出的每一句话都是发给智能体的指令，不是对你说话/);
   assert.match(liveRust, /绝不抢答/);
-  // The token budget must fit a complete answer (40 tokens used to cut every
-  // sentence off after a few words), and the platform must not rewrite the
-  // "never speak first" persona behind our back.
+  // The token budget is the platform maximum so no answer is ever cut short,
+  // and the platform must not rewrite the "never speak first" persona behind
+  // our back.
   assert.match(liveRust, /"temperature": 0\.2/);
-  assert.match(liveRust, /"max_tokens": 800/);
+  assert.match(liveRust, /"max_tokens": 65536/);
   assert.match(liveRust, /"persona_enhance": false/);
-  // The platform's default opening line greets on its own; it is silenced so
-  // the app's "朗读：" hello is the only one spoken at connect time.
-  assert.match(liveRust, /"greeting_instruction": "接通后保持安静/);
+  // The platform's default opening line is replaced with the character's real
+  // hello, so the call opens with one controlled greeting that is actually
+  // spoken instead of a "stay silent" order the avatar used to ack aloud.
+  assert.match(liveRust, /"greeting_instruction": format!\("接通后请微笑着说：\{\}", greeting_line\(avatar\)\)/);
   assert.match(liveRust, /"silence_duration_ms": 6000/);
 });
 
@@ -1058,12 +1059,17 @@ test("a live call keeps the microphone and silences self-started answers", () =>
   assert.match(liveRust, /bill as the very last step of hanging up/);
   assert.match(liveRust, /crate::set_live_call_active\(false\);\n\s+result/);
   assert.match(frontend, /await invoke\("videolive_end"\)\.catch\(\(\) => \{\}\);/);
-  // An answer the built-in LLM starts on its own is cut off as soon as the
-  // transcription gives it away, and her words join the echo log so they are
-  // never answered again when the microphone hears them back.
+  // Her words join the echo log so they are never answered again when the
+  // microphone hears them back. The app never cuts the digital human off on
+  // its own: only the master's voice while a line is still on her lips is a
+  // barge-in, and it hands the floor to the new order instead of resuming the
+  // interrupted line.
   assert.match(liveSource, /private noteBotSpeech\(text: string\)/);
-  assert.match(liveSource, /打断自发回答/);
-  assert.match(liveSource, /this\.readingUntil = Date\.now\(\) \+ \(seconds \+ 0\.4\) \* 1000/);
+  assert.match(liveSource, /抢断台词，改听新指令/);
+  assert.match(liveSource, /private handleBargeIn\(text: string\)/);
+  assert.match(liveSource, /this\.readingUntil = sentAt \+ \(seconds \+ 0\.4\) \* 1000/);
+  assert.match(liveSource, /this\.speechQueue\.length = 0/);
+  assert.doesNotMatch(liveSource, /续念被打断的台词/);
 });
 
 test("the digital human arrives frame by frame instead of a green box", () => {

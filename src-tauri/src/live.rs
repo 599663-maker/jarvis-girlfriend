@@ -76,12 +76,24 @@ pub fn live_persona(avatar: &Avatar) -> String {
 不要添加、删减、改写，也不要回应它的内容。\n\
 - 一次只念一条「朗读：」内容；必须把当前这一条完整念完，念完之前不接受、\
 不回应任何新输入，也不许中途换句子；念完后立刻安静，等待下一条「朗读：」。\n\
-- 收到「朗读：」文本后，你的全部输出只能是冒号后面的内容本身：必须从它\
-的第一个字念到最后一个字，念完最后一个字后立即停止输出，不许续写、评论、\
-提问、总结或回应。\n\
 - 不要使用 Markdown、列表、表情符号、括号里的动作说明或旁白。",
         avatar.persona.trim()
     )
+}
+
+/// The very first line of a conversation. Reused for the opening greeting the
+/// platform speaks on its own, so the call opens with the character's real
+/// hello instead of a random improvised one.
+fn greeting_line(avatar: &Avatar) -> String {
+    if avatar.greeting.trim().is_empty() {
+        if avatar.id == avatars::DEFAULT_AVATAR_ID {
+            crate::WAKE_GREETING.to_owned()
+        } else {
+            format!("{}在此，主人请吩咐！", avatar.name)
+        }
+    } else {
+        avatar.greeting.trim().to_owned()
+    }
 }
 
 /// The chroma-key twin of a portrait, when the matting tool produced one.
@@ -169,11 +181,11 @@ fn create_body(avatar: &Avatar, asset_id: &str, image_uri: Option<String>) -> Va
         "voice": live_voice(avatar),
         "idle_action": true,
         "persona_enhance": false,
-        // The platform's default opening line is a random greeting that fires
-        // the moment the avatar joins and collides with the app's own
-        // "朗读：" hello. Overriding it with silence hands the very first
-        // utterance to the app as well.
-        "greeting_instruction": "接通后保持安静，不要主动说话，等待第一条以「朗读：」开头的文字指令。",
+        // The platform's default opening line is a random greeting. Asking it
+        // to say the character's real hello instead keeps the first utterance
+        // both spoken and controlled — a "stay silent" instruction used to
+        // make the avatar acknowledge it aloud and then ignore orders.
+        "greeting_instruction": format!("接通后请微笑着说：{}", greeting_line(avatar)),
         "farewell_enabled": false,
     });
     if !asset_id.is_empty() {
@@ -197,17 +209,14 @@ fn create_body(avatar: &Avatar, asset_id: &str, image_uri: Option<String>) -> Va
             "silence_duration_ms": 6000,
             "idle_timeout_ms": 0
         },
-        // The app is the only writer and every spoken line arrives as a
-        // "朗读：…" text, so the budget must fit a complete answer: 40 tokens
-        // cut every sentence off after a few words, which sounded like "话没
-        // 说完又说起另一件事". Any self-started answer the model still makes
-        // is caught and interrupted by the webview instead of being squeezed
-        // here.
+        // Answers are read out in full: the budget is the platform maximum so
+        // no reply is ever cut short. Any self-started answer the model makes
+        // anyway is caught and interrupted by the webview.
         "llm": {
             "temperature": 0.2,
             "top_p": 0.6,
             "top_k": 10,
-            "max_tokens": 800,
+            "max_tokens": 65536,
             "frequency_penalty": 1.6,
             "presence_penalty": 0
         },

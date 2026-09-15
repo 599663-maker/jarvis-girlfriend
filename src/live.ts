@@ -188,20 +188,13 @@ export class LiveCall {
   private speechTimer = 0;
   /** What the digital human was asked to say recently, for echo detection. */
   private readonly spokenLog: Array<{ text: string; at: number }> = [];
-  /** Lines sent as "朗读：…" while they are still in her mouth. */
-  private readonly sentLines: Array<{ text: string; at: number }> = [];
-  /** Debounces the interrupt that cuts off a self-started answer. */
-  private botInterruptTimer = 0;
   /** A "朗读：…" line is expected to be on her lips until this moment. */
   private readingUntil = 0;
+  /** The last settled order arrived as a barge-in; the frontend consumes it. */
+  private bargeInPending = false;
   private static readonly SPEECH_CHARS_PER_SECOND = 4.5;
   private static readonly SPEECH_TAIL_MS = 800;
   private static readonly ECHO_WINDOW_MS = 90000;
-  private static readonly SENT_LINE_WINDOW_MS = 120000;
-  /** After a line was heard being read, only its trailing syllable is ours. */
-  private static readonly READING_TAIL_MS = 1200;
-  /** Each text_msg stays far under the model's token budget when read back. */
-  private static readonly SAY_CHUNK_CHARS = 280;
 
   constructor(canvas: HTMLCanvasElement, handlers: LiveHandlers) {
     this.canvas = canvas;
@@ -542,10 +535,7 @@ export class LiveCall {
       const brief = text.length > 60 ? `${text.slice(0, 60)}…` : text;
       if (type === 9) {
         trace(`听写用户：${brief}`);
-        // The master's voice is a barge-in signal: any model self-talk is cut
-        // at once, and if a "朗读：" line is still on her lips the master has
-        // the floor. Her own echo is never a barge-in.
-        if (!/^朗读[:：]/.test(text) && !this.isEcho(text)) this.interrupt();
+        this.handleBargeIn(text);
         this.handlers.onUserText?.(text);
       } else {
         trace(`听写数字人：${brief}`);
@@ -556,44 +546,39 @@ export class LiveCall {
   }
 
   /**
-   * The digital human only ever speaks two ways: reading a "朗读：…" line the
-   * app sent, or answering on her own because the built-in LLM heard the room.
-   * Her own words re-enter through the microphone as user text, so both are
-   * logged for the echo filter — and a self-started answer is cut off the
-   * moment the transcription gives it away, before it can collide with the
-   * line the agent is about to hand over.
+   * The master's voice while a line is still on her lips (or waiting in the
+   * queue) is a barge-in: the old answer is dropped and the new order takes
+   * the floor. Otherwise the app never cuts the digital human off on its own.
+   */
+  private handleBargeIn(text: string) {
+    if (/^朗读[:：]/.test(text) || this.isEcho(text)) return;
+    const now = Date.now();
+    if (now >= this.readingUntil && this.speechQueue.length === 0) return;
+    trace("抢断台词，改听新指令");
+    this.interrupt();
+    this.speechQueue.length = 0;
+    window.clearTimeout(this.speechTimer);
+    this.speechTimer = 0;
+    this.readingUntil = 0;
+    this.bargeInPending = true;
+  }
+
+  /** True once per barge-in, so the frontend can cancel the old turn. */
+  consumeBargeIn(): boolean {
+    const pending = this.bargeInPending;
+    this.bargeInPending = false;
+    return pending;
+  }
+
+  /**
+   * Her own words are only logged for the echo filter: the app never cuts the
+   * digital human off on its own — only the master's voice barges in.
    */
   private noteBotSpeech(text: string) {
     const bare = text.replace(/^朗读[:：]\s*/, "").trim();
     if (!bare) return;
-    const now = Date.now();
-    while (this.sentLines.length > 0 && now - this.sentLines[0].at > LiveCall.SENT_LINE_WINDOW_MS) {
-      this.sentLines.shift();
-    }
-    // Her reading of our line comes back as type-10 too; ASR can garble it, so
-    // a fuzzy match protects the reading from being cut by our own police.
-    const reading = this.sentLines.some(
-      (sent) => bare.includes(sent.text) || speechOverlap(bare, sent.text) >= 0.45,
-    );
-    this.spokenLog.push({ text: bare, at: now });
+    this.spokenLog.push({ text: bare, at: Date.now() });
     while (this.spokenLog.length > 6) this.spokenLog.shift();
-    if (this.stopping) return;
-    if (reading) {
-      // The line just left her lips: the model's self-started follow-up starts
-      // right after it, so policing re-arms now instead of waiting out the
-      // whole reading estimate. That estimate used to suppress the police for
-      // seconds and the follow-up talked over the next answer.
-      this.readingUntil = Math.min(this.readingUntil, now + LiveCall.READING_TAIL_MS);
-      window.clearTimeout(this.botInterruptTimer);
-      this.botInterruptTimer = 0;
-      return;
-    }
-    if (now < this.readingUntil) return;
-    window.clearTimeout(this.botInterruptTimer);
-    this.botInterruptTimer = window.setTimeout(() => {
-      trace(`打断自发回答：${bare.length > 40 ? `${bare.slice(0, 40)}…` : bare}`);
-      this.interrupt();
-    }, 120);
   }
 
   /**
@@ -605,12 +590,7 @@ export class LiveCall {
   say(text: string) {
     const content = text.trim();
     if (!content) return;
-    // One text_msg per stretch keeps every reading inside the model's token
-    // budget, so a long answer is never truncated mid-sentence by max_tokens.
-    const chars = Array.from(content);
-    for (let i = 0; i < chars.length; i += LiveCall.SAY_CHUNK_CHARS) {
-      this.speechQueue.push(chars.slice(i, i + LiveCall.SAY_CHUNK_CHARS).join(""));
-    }
+    this.speechQueue.push(content);
     this.drainSpeechQueue();
   }
 
@@ -629,6 +609,7 @@ export class LiveCall {
         return;
       }
       trace(`朗读发送：${content.length > 50 ? `${content.slice(0, 50)}…` : content}`);
+      const sentAt = Date.now();
       this.socket.send(
         JSON.stringify({
           type: 99,
@@ -638,20 +619,18 @@ export class LiveCall {
             text_msg: {
               msg_id: `jarvis-${Date.now()}`,
               content: `朗读：${content}`,
-              timestamp: Date.now(),
+              timestamp: sentAt,
             },
           },
         }),
       );
-      this.spokenLog.push({ text: content, at: Date.now() });
+      this.spokenLog.push({ text: content, at: sentAt });
       while (this.spokenLog.length > 6) this.spokenLog.shift();
-      this.sentLines.push({ text: content, at: Date.now() });
-      while (this.sentLines.length > 3) this.sentLines.shift();
-      const seconds = Math.min(
-        40,
-        Math.max(1.8, content.length / LiveCall.SPEECH_CHARS_PER_SECOND + LiveCall.SPEECH_TAIL_MS / 1000),
+      const seconds = Math.max(
+        1.8,
+        content.length / LiveCall.SPEECH_CHARS_PER_SECOND + LiveCall.SPEECH_TAIL_MS / 1000,
       );
-      this.readingUntil = Date.now() + (seconds + 0.4) * 1000;
+      this.readingUntil = sentAt + (seconds + 0.4) * 1000;
       this.speechTimer = window.setTimeout(send, seconds * 1000);
     };
     send();
@@ -885,9 +864,9 @@ export class LiveCall {
     this.setStage("ending", "正在挂断…");
     window.clearTimeout(this.speechTimer);
     this.speechTimer = 0;
-    window.clearTimeout(this.botInterruptTimer);
-    this.botInterruptTimer = 0;
     this.speechQueue.length = 0;
+    this.readingUntil = 0;
+    this.bargeInPending = false;
     window.clearTimeout(this.retryTimer);
     window.clearInterval(this.detectionTimer);
     cancelAnimationFrame(this.frameHandle);

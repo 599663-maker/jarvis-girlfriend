@@ -2195,6 +2195,14 @@ async function handleLiveUserText(text: string) {
 async function deliverLiveUserText(text: string) {
   if (!text) return;
   transcript.textContent = text;
+  // A barge-in drops the old line and the old turn: the new order takes the
+  // floor and Codex answers it instead of resuming the interrupted answer.
+  if (liveCall?.consumeBargeIn()) {
+    void invoke("web_log", {
+      message: `实时通话：抢断生效，处理新指令 ${text.length > 40 ? `${text.slice(0, 40)}…` : text}`,
+    }).catch(() => {});
+    void invoke("interrupt_turn").catch(() => {});
+  }
   if (matchLiveCommand(text) === "stop") {
     await endLiveCall("user_end");
     return;
@@ -2228,15 +2236,9 @@ async function deliverLiveUserText(text: string) {
   }
   // Everything else is an order for Codex, not small talk: the digital human is
   // the master's face and voice, and Codex stays the brain behind it. The
-  // answer comes back through speakLine(), so it is read out with matching lips.
-  // While the agent is answering, any transcription is almost always her own
-  // voice feeding back — a fresh order only opens once the turn has finished.
-  if (state.agentWorking) {
-    void invoke("web_log", {
-      message: `实时通话：正在回答，暂不接新指令 ${text.length > 40 ? `${text.slice(0, 40)}…` : text}`,
-    }).catch(() => {});
-    return;
-  }
+  // answer comes back through speakLine(), so it is read out with matching
+  // lips. A new order always wins: Codex starts a fresh turn for it even when
+  // the previous answer is still being generated.
   const now = Date.now();
   while (deliveredOrders.length > 0 && now - deliveredOrders[0].at > 20000) deliveredOrders.shift();
   if (deliveredOrders.some((order) => speechOverlap(order.text, text) >= 0.85)) {
@@ -2324,7 +2326,10 @@ async function dialCharacter(id: string, greet = false): Promise<boolean> {
     speakLine(`${target.name}还没有实时形象，先给她导入一张图片吧。`);
     return false;
   }
-  pendingLiveGreeting = greet && !liveCall?.active ? target.greeting?.trim() ?? "" : "";
+  // The opening hello is spoken by the platform itself: the session body's
+  // greeting_instruction carries the character's real line, so a second
+  // "朗读：" greeting here would say it twice.
+  pendingLiveGreeting = "";
   await startLiveCall();
   return Boolean(liveCall?.active);
 }
@@ -2353,11 +2358,6 @@ async function startLiveCall() {
       updateScenePlayback();
       if (stage === "live") {
         setMode("listening");
-        if (pendingLiveGreeting) {
-          const line = pendingLiveGreeting;
-          pendingLiveGreeting = "";
-          window.setTimeout(() => call.say(line), 450);
-        }
       } else if (dialing) {
         setMode("voice-starting");
       } else if (stage === "idle") {
