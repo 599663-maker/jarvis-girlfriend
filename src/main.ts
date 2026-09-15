@@ -7,7 +7,7 @@ import { VOICE_PACK_SPEECH, matchVoicePackCommand } from "./voice-pack-command";
 import { matchAvatarCommand, type AvatarName } from "./avatar-command";
 import { matchVisionCommand } from "./vision-command";
 import { matchCallCommand, matchLiveCommand } from "./live-command";
-import { LiveCall, type LiveStage } from "./live";
+import { LiveCall, speechOverlap, type LiveStage } from "./live";
 import { cutPortraitBackground } from "./chroma";
 import { ScenePlayer, type Scene } from "./idle";
 
@@ -2100,10 +2100,21 @@ function updateLiveChip(stage: LiveStage, detail?: string) {
 /** Spoken orders that stay local: the character keeps talking, the HUD acts. */
 let liveTranscribeTimer: number | undefined;
 let liveTranscribeBuffer = "";
+/** Recently delivered orders: a re-transcription of the same sentence must
+ * not run the same task twice. */
+const deliveredOrders: Array<{ text: string; at: number }> = [];
 
 async function handleLiveUserText(text: string) {
   const line = text.trim();
   if (!line || line === liveTranscribeBuffer) return;
+  // Her own voice comes back through the microphone: a transcription that
+  // repeats what she was asked to read is an echo, never a new order.
+  if (liveCall?.isEcho(line)) {
+    void invoke("web_log", {
+      message: `实时通话：忽略回声 ${line.length > 40 ? `${line.slice(0, 40)}…` : line}`,
+    }).catch(() => {});
+    return;
+  }
   // Vidu streams the sentence as it is recognised: wait for it to settle so
   // one utterance becomes exactly one order instead of several agent turns
   // answering over each other.
@@ -2113,8 +2124,9 @@ async function handleLiveUserText(text: string) {
     liveTranscribeTimer = undefined;
     const settled = liveTranscribeBuffer;
     liveTranscribeBuffer = "";
+    if (liveCall?.isEcho(settled)) return;
     void deliverLiveUserText(settled);
-  }, 800);
+  }, 1500);
 }
 
 async function deliverLiveUserText(text: string) {
@@ -2122,6 +2134,12 @@ async function deliverLiveUserText(text: string) {
   transcript.textContent = text;
   if (matchLiveCommand(text) === "stop") {
     await endLiveCall("user_end");
+    return;
+  }
+  // "关闭退出" is always honoured, even while she is still answering.
+  if (matchShutdownCommand(text)) {
+    await endLiveCall("user_end", false).catch(() => {});
+    void runCommand(text, false);
     return;
   }
   const vision = matchVisionCommand(text);
@@ -2148,6 +2166,25 @@ async function deliverLiveUserText(text: string) {
   // Everything else is an order for Codex, not small talk: the digital human is
   // the master's face and voice, and Codex stays the brain behind it. The
   // answer comes back through speakLine(), so it is read out with matching lips.
+  // While the agent is answering, any transcription is almost always her own
+  // voice feeding back — a fresh order only opens once the turn has finished.
+  if (state.agentWorking) {
+    void invoke("web_log", {
+      message: `实时通话：正在回答，暂不接新指令 ${text.length > 40 ? `${text.slice(0, 40)}…` : text}`,
+    }).catch(() => {});
+    return;
+  }
+  const now = Date.now();
+  while (deliveredOrders.length > 0 && now - deliveredOrders[0].at > 20000) deliveredOrders.shift();
+  if (deliveredOrders.some((order) => speechOverlap(order.text, text) >= 0.85)) {
+    void invoke("web_log", { message: `实时通话：忽略重复指令 ${text.slice(0, 40)}` }).catch(() => {});
+    return;
+  }
+  deliveredOrders.push({ text, at: now });
+  while (deliveredOrders.length > 3) deliveredOrders.shift();
+  void invoke("web_log", {
+    message: `实时通话：收到指令 ${text.length > 60 ? `${text.slice(0, 60)}…` : text}`,
+  }).catch(() => {});
   void runCommand(text, false);
 }
 

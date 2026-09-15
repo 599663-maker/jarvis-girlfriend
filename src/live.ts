@@ -105,6 +105,29 @@ function rtcEnum(group: string, key: string, fallback: number): number {
   return engine?.[group]?.[key] ?? namespace?.[group]?.[key] ?? fallback;
 }
 
+/** How much of two lines is the same speech, ignoring punctuation. */
+export function speechOverlap(a: string, b: string): number {
+  const normalize = (value: string) => value.replace(/[，。！？、,.!?～~\s“”"'：:]/g, "");
+  const x = normalize(a);
+  const y = normalize(b);
+  if (!x || !y) return 0;
+  const shorter = x.length < y.length ? x : y;
+  const longer = x.length < y.length ? y : x;
+  let best = 0;
+  const previous = new Array<number>(shorter.length + 1).fill(0);
+  for (let i = 1; i <= longer.length; i += 1) {
+    const current = new Array<number>(shorter.length + 1).fill(0);
+    for (let j = 1; j <= shorter.length; j += 1) {
+      if (longer[i - 1] === shorter[j - 1]) {
+        current[j] = previous[j - 1] + 1;
+        if (current[j] > best) best = current[j];
+      }
+    }
+    for (let j = 0; j <= shorter.length; j += 1) previous[j] = current[j];
+  }
+  return (2 * best) / (x.length + y.length);
+}
+
 export class LiveCall {
   private readonly canvas: HTMLCanvasElement;
   private readonly handlers: LiveHandlers;
@@ -142,6 +165,14 @@ export class LiveCall {
    */
   private readonly subState = new Map<string, number>();
   private readonly subRequested = new Set<string>();
+  /** Lines waiting to be read out, so one utterance never cuts another off. */
+  private readonly speechQueue: string[] = [];
+  private speechTimer = 0;
+  /** What the digital human was asked to say recently, for echo detection. */
+  private readonly spokenLog: Array<{ text: string; at: number }> = [];
+  private static readonly SPEECH_CHARS_PER_SECOND = 4.5;
+  private static readonly SPEECH_TAIL_MS = 800;
+  private static readonly ECHO_WINDOW_MS = 90000;
 
   constructor(canvas: HTMLCanvasElement, handlers: LiveHandlers) {
     this.canvas = canvas;
@@ -478,29 +509,83 @@ export class LiveCall {
     if (type === 9 || type === 10) {
       const text = extractText(payload);
       if (!text) return;
-      if (type === 9) this.handlers.onUserText?.(text);
-      else this.handlers.onBotText?.(text);
+      const brief = text.length > 60 ? `${text.slice(0, 60)}…` : text;
+      if (type === 9) {
+        trace(`听写用户：${brief}`);
+        this.handlers.onUserText?.(text);
+      } else {
+        trace(`听写数字人：${brief}`);
+        this.handlers.onBotText?.(text);
+      }
     }
   }
 
-  /** Feeds a line to the digital human so it is spoken with matching lips. */
+  /**
+   * Feeds a line to the digital human so it is spoken with matching lips.
+   * Sends are serialized: a new text_msg takes over the line immediately, so
+   * firing several at once is exactly what made her cut one sentence off to
+   * start another. Each queued line waits for the previous one to finish.
+   */
   say(text: string) {
     const content = text.trim();
-    if (!content || this.socket?.readyState !== WebSocket.OPEN) return;
-    this.socket.send(
-      JSON.stringify({
-        type: 99,
-        live_id: this.liveId,
-        seq_id: Date.now() % 100000,
-        payload: {
-          text_msg: {
-            msg_id: `jarvis-${Date.now()}`,
-            content: `朗读：${content}`,
-            timestamp: Date.now(),
+    if (!content) return;
+    this.speechQueue.push(content);
+    this.drainSpeechQueue();
+  }
+
+  private drainSpeechQueue() {
+    if (this.speechTimer) return;
+    const send = () => {
+      this.speechTimer = 0;
+      if (this.stopping) {
+        this.speechQueue.length = 0;
+        return;
+      }
+      const content = this.speechQueue.shift();
+      if (content === undefined) return;
+      if (this.socket?.readyState !== WebSocket.OPEN) {
+        this.speechQueue.length = 0;
+        return;
+      }
+      trace(`朗读发送：${content.length > 50 ? `${content.slice(0, 50)}…` : content}`);
+      this.socket.send(
+        JSON.stringify({
+          type: 99,
+          live_id: this.liveId,
+          seq_id: Date.now() % 100000,
+          payload: {
+            text_msg: {
+              msg_id: `jarvis-${Date.now()}`,
+              content: `朗读：${content}`,
+              timestamp: Date.now(),
+            },
           },
-        },
-      }),
-    );
+        }),
+      );
+      this.spokenLog.push({ text: content, at: Date.now() });
+      while (this.spokenLog.length > 4) this.spokenLog.shift();
+      const seconds = Math.min(
+        40,
+        Math.max(1.8, content.length / LiveCall.SPEECH_CHARS_PER_SECOND + LiveCall.SPEECH_TAIL_MS / 1000),
+      );
+      this.speechTimer = window.setTimeout(send, seconds * 1000);
+    };
+    send();
+  }
+
+  /**
+   * True when the line sounds like the digital human's own recent speech.
+   * Her voice plays on the speakers and comes straight back into the
+   * microphone, where Vidu transcribes it as user input; without this check
+   * every answer is heard again as a new order and the conversation loops.
+   */
+  isEcho(text: string): boolean {
+    const now = Date.now();
+    for (const spoken of this.spokenLog) {
+      if (now - spoken.at > LiveCall.ECHO_WINDOW_MS) continue;
+      if (speechOverlap(text, spoken.text) >= 0.6) return true;
+    }
+    return false;
   }
 
   /** Barge-in: stop the current answer without dropping the call. */
@@ -687,6 +772,9 @@ export class LiveCall {
     if (this.stage === "idle") return null;
     this.stopping = true;
     this.setStage("ending", "正在挂断…");
+    window.clearTimeout(this.speechTimer);
+    this.speechTimer = 0;
+    this.speechQueue.length = 0;
     window.clearTimeout(this.retryTimer);
     window.clearInterval(this.detectionTimer);
     cancelAnimationFrame(this.frameHandle);
