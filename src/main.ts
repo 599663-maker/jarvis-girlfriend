@@ -916,6 +916,10 @@ async function handle(message: Message) {
       if (text) transcript.textContent = text;
       userTranscriptBuffer = "";
       if (text) triggerCharacterAction("acknowledge");
+      // The voice model hears every spoken sentence itself, but dialling
+      // orders are answered on this side of the glass: "呼叫小肉肉" opens the
+      // realtime Vidu call instead of reaching the model as small talk.
+      if (text) void interceptSpokenCommand(text);
     }
   } else if (method === "thread/realtime/itemAdded") {
     const itemType = String(params?.item?.type ?? "");
@@ -939,6 +943,10 @@ async function handle(message: Message) {
       protocol: "Codex app-server V3 · WebRTC",
       threadId: params?.threadId ?? state.session?.threadId,
     });
+    // Dialling stood the voice session down on purpose: handing the microphone
+    // back to the wake listener now would let the digital human's own voice
+    // re-wake Jarvis mid-call.
+    if (liveCall?.active || dialingLive) return;
     if (!state.manualStop) {
       setMode("ready");
       response.textContent = "Codex Voice 已结束。再次说“嗨 Jarvis”即可唤醒。";
@@ -1402,6 +1410,23 @@ async function runCommand(text: string, clearInput = true) {
   setMode("working");
   updateScenePlayback();
   await invoke("send_text", { text });
+}
+
+/**
+ * Spoken orders during an official Codex Voice session. The model is already
+ * hearing the sentence, so only dialling orders are taken over — "呼叫小肉肉"
+ * or "打开视频" opens the realtime Vidu call, "关闭 Jarvis" is answered by the
+ * app itself. Everything else stays with the model, so a farewell like "拜拜"
+ * keeps its normal conversation meaning.
+ */
+async function interceptSpokenCommand(text: string) {
+  const dials =
+    matchCallCommand(text, avatars) !== null || matchLiveCommand(text) === "start";
+  if (!dials && !matchShutdownCommand(text)) return;
+  // The model may already be answering the same sentence: dialling closes the
+  // voice session, and runCommand interrupts whenever a reply is playing.
+  speakCanceled = true;
+  await runCommand(text, false);
 }
 
 function plainForSpeech(text: string) {
@@ -1980,6 +2005,8 @@ async function createAvatarFromForm() {
 // ---------------------------------------------------------------------------
 
 let liveCall: LiveCall | null = null;
+/** True from the moment a dial is ordered until the line is up or torn down. */
+let dialingLive = false;
 let liveVoices: Array<{ id: string; label: string }> = [];
 let liveTimer: number | undefined;
 let liveElapsed = 0;
@@ -2247,6 +2274,7 @@ let pendingLiveGreeting = "";
 async function dialCharacter(id: string, greet = false): Promise<boolean> {
   const target = avatars.find((avatar) => avatar.id === id);
   if (!target) return false;
+  if (dialingLive && id === activeAvatar) return true;
   if (liveCall?.active) {
     if (id === activeAvatar) return true;
     await endLiveCall("switch", false);
@@ -2264,6 +2292,7 @@ async function dialCharacter(id: string, greet = false): Promise<boolean> {
 
 async function startLiveCall() {
   if (liveCall?.active) return;
+  dialingLive = true;
   showCallChip(false);
   const canvas = $("#live-character") as HTMLCanvasElement;
   response.textContent = "正在接通实时数字人…";
@@ -2341,6 +2370,7 @@ async function startLiveCall() {
     shell.classList.add("is-live-call");
     updateScenePlayback();
   } catch (error) {
+    dialingLive = false;
     liveCall = null;
     canvas.hidden = true;
     shell.classList.remove("is-live-call");
@@ -2355,6 +2385,7 @@ async function startLiveCall() {
 }
 
 async function endLiveCall(reason = "user_end", announce = true) {
+  dialingLive = false;
   const call = liveCall;
   liveCall = null;
   // The bar goes first: teardown talks to the network, and the master should
@@ -2371,7 +2402,11 @@ async function endLiveCall(reason = "user_end", announce = true) {
   // off instead of leaving a frozen portrait on screen.
   updateScenePlayback();
   pendingLiveGreeting = "";
-  await armWakeListener().catch(() => {});
+  // A spoken "挂断" while the official voice session still owns the
+  // microphone must not hand it back to the wake listener.
+  if (!state.directVoice?.voiceActive && !peer) {
+    await armWakeListener().catch(() => {});
+  }
   if (announce) setMode("ready");
   // The next call is one click away, so the dialler is what stays on screen.
   const active = avatars.find((avatar) => avatar.id === activeAvatar);
