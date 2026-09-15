@@ -90,10 +90,22 @@ export function usableChromaSample(sample: KeySample | null): KeySample | null {
   if (sample.spread > 30) return null;
   const { r, g, b } = sample.color;
   const chroma = Math.max(r, g, b) - Math.min(r, g, b);
-  if (chroma < 40) return null;
-  const green = g >= r * 1.15 && g >= b * 0.9;
-  const blue = b >= r * 1.15 && b >= g * 0.9;
-  const magenta = r >= g * 1.15 && b >= g * 1.15;
+  if (chroma < 45) return null;
+  const max = Math.max(r, g, b);
+  // A washed-out studio wall can still pass a loose per-channel green test —
+  // Vidu's own set once measured rgb(132,174,162), was adopted as the key,
+  // and left the real green screen unkeyed for the rest of the call. Only a
+  // saturated chroma colour is a key.
+  if (chroma / max < 0.45) return null;
+  const hue =
+    r === max
+      ? ((g - b) / chroma + (g < b ? 6 : 0)) * 60
+      : g === max
+        ? ((b - r) / chroma + 2) * 60
+        : ((r - g) / chroma + 4) * 60;
+  const green = hue >= 95 && hue <= 160;
+  const blue = hue >= 180 && hue <= 260;
+  const magenta = hue >= 290 && hue <= 340;
   return green || blue || magenta ? sample : null;
 }
 
@@ -323,8 +335,10 @@ export function readBackdropClearance(
 export type VideoKeyer = {
   /** Draws one frame; returns false when the video has no frame yet. */
   render(video: HTMLVideoElement): boolean;
-  setKey(color: KeyColor | null): void;
+  setKey(color: KeyColor | null, spread?: number): void;
   key(): KeyColor | null;
+  /** Samples the current frame without changing the shader's key. */
+  sample(video: HTMLVideoElement): KeySample | null;
   /** Samples the current frame and adopts its backdrop as the key colour. */
   detect(video: HTMLVideoElement): KeySample | null;
   /** The similarity/smoothness the shader is keying with at this moment. */
@@ -420,9 +434,9 @@ export function createVideoKeyer(canvas: HTMLCanvasElement): VideoKeyer | null {
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       return true;
     },
-    setKey(color: KeyColor | null) {
+    setKey(color: KeyColor | null, spread = 8) {
       current = color;
-      thresholds = keyThresholds(color ? 8 : 0);
+      thresholds = keyThresholds(color ? spread : 0);
     },
     key() {
       return current;
@@ -430,7 +444,7 @@ export function createVideoKeyer(canvas: HTMLCanvasElement): VideoKeyer | null {
     thresholds() {
       return { ...thresholds };
     },
-    detect(video: HTMLVideoElement) {
+    sample(video: HTMLVideoElement) {
       if (!sampleContext || !video.videoWidth) return null;
       sampleContext.drawImage(video, 0, 0, sampleCanvas.width, sampleCanvas.height);
       let frame: ImageData;
@@ -440,7 +454,10 @@ export function createVideoKeyer(canvas: HTMLCanvasElement): VideoKeyer | null {
         return null;
       }
       const sample = detectKeyColor(frame.data, sampleCanvas.width, sampleCanvas.height);
-      const usable = usableChromaSample(sample);
+      return usableChromaSample(sample);
+    },
+    detect(video: HTMLVideoElement) {
+      const usable = this.sample(video);
       if (!usable) return null;
       current = usable.color;
       thresholds = keyThresholds(usable.spread);

@@ -770,8 +770,13 @@ export class LiveCall {
       // frame with no usable sample that persists for two checks — stands the
       // picture down.
       const previousKey = this.keyer.key();
-      const sample = this.keyer.detect(this.video);
+      // Sampling here is read-only: a fresh colour is only adopted below when
+      // it matches what the shader is already keying on. Adopting a stray
+      // frame's colour once re-keyed the whole stream and left the real green
+      // screen unkeyed for the rest of the call.
+      const sample = this.keyer.sample(this.video);
       if (sample && keyColorClose(sample.color, previousKey)) {
+        this.keyer.setKey(sample.color, sample.spread);
         this.keyStale = false;
         this.driftChecks = 0;
         return;
@@ -836,7 +841,8 @@ export class LiveCall {
       return;
     }
     this.keyAttempts += 1;
-    const sample = this.keyer.detect(this.video);
+    const previous = this.keyer.key();
+    const sample = this.keyer.sample(this.video);
     if (!sample) {
       // This frame carries no flat chroma backdrop — the model may still be on
       // its own studio set. With the key unset the shader draws nothing, so
@@ -844,8 +850,7 @@ export class LiveCall {
       if (this.keyAttempts === 1) this.handlers.onBackdrop?.("plain", null);
       return;
     }
-    const previous = this.keyer.key();
-    this.keyer.setKey(sample.color);
+    this.keyer.setKey(sample.color, sample.spread);
     this.keyStale = false;
     if (previous) {
       trace(

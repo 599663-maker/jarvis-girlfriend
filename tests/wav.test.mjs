@@ -981,6 +981,21 @@ test("keying removes a flat backdrop and keeps the character", async () => {
     usableChromaSample({ color: { r: 0, g: 177, b: 64 }, spread: 40 }),
     null,
   );
+  // The washed-out studio wall that shipped a fully green screen mid-call:
+  // Vidu's own set measured rgb(132,174,162) once, was adopted as the key,
+  // and the real chroma green was then never removed again.
+  assert.equal(
+    usableChromaSample({ color: { r: 132, g: 174, b: 162 }, spread: 15.6 }),
+    null,
+  );
+  // A greenish wall with enough chroma still fails on saturation.
+  assert.equal(
+    usableChromaSample({ color: { r: 120, g: 200, b: 150 }, spread: 4 }),
+    null,
+  );
+  // Blue and magenta sets keep keying.
+  assert.ok(usableChromaSample({ color: { r: 0, g: 20, b: 200 }, spread: 2 }));
+  assert.ok(usableChromaSample({ color: { r: 200, g: 20, b: 190 }, spread: 2 }));
 });
 
 test("portrait matting is part of the build and the bundle", () => {
